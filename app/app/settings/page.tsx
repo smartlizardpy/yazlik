@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
+import { and, asc, eq, isNull } from "drizzle-orm";
+import { db } from "@/db";
+import { images } from "@/db/schema";
 import { requireHouse } from "@/lib/session";
+import { PhotosSection } from "./photos-section";
 import { SettingsForm } from "./settings-form";
 
 export const metadata: Metadata = {
@@ -22,6 +26,22 @@ export const metadata: Metadata = {
 export default async function SettingsPage() {
   const house = await requireHouse();
 
+  // Gallery photos only: both foreign keys null is the schema's way of saying
+  // "this hangs on the house itself" rather than on a place or a guide section.
+  // `createdAt` breaks a tie so two photos sharing a position never swap places
+  // between renders.
+  const photos = await db
+    .select({ id: images.id, url: images.url, alt: images.alt })
+    .from(images)
+    .where(
+      and(
+        eq(images.houseId, house.id),
+        isNull(images.placeId),
+        isNull(images.sectionId),
+      ),
+    )
+    .orderBy(asc(images.position), asc(images.createdAt));
+
   return (
     <section className="flex flex-1 flex-col gap-6 py-6">
       <header className="flex flex-col gap-2">
@@ -31,6 +51,15 @@ export default async function SettingsPage() {
           request has to meet.
         </p>
       </header>
+
+      {/* Above the form, not inside it. The form ends in the sticky "Save
+          changes" bar, and a primary button with more of the screen after it
+          reads as belonging to whatever follows. Photos save on their own. */}
+      <PhotosSection
+        houseId={house.id}
+        houseName={house.name}
+        photos={photos}
+      />
 
       <SettingsForm
         house={{
