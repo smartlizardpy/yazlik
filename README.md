@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Yazlık
 
-## Getting Started
+Booking links for a private summer house. The owner sets the rules once and shares one link; guests request date ranges from their phone and the owner approves or declines in a tap. No money changes hands — this is for family and friends, not renters.
 
-First, run the development server:
+Working title. See `DECISIONS.md` if you want to rename it.
+
+## Stack
+
+- Next.js 16 (App Router, Server Components, Server Actions) + TypeScript strict
+- Tailwind CSS v4 (CSS-first config in `app/globals.css`, no `tailwind.config.ts`) + shadcn/ui
+- Neon Postgres + Drizzle ORM + postgres.js
+- better-auth, magic link only, owners only — guests never sign in
+- Resend for email (console fallback in dev); images on Vercel Blob or local disk
+- Google Calendar one-way sync via `googleapis` — phase 6, needs your credentials
+- zod v4, date-fns, Vitest, Playwright
+- No AI API, no Google Places/Maps/geocoding, no payments
+
+## Run it locally
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+pnpm dev     # http://localhost:3000
+pnpm test    # Vitest
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Environment
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`.env.local` already exists with working values for local development. `.env.example` lists
+every key with a comment.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Key | Status |
+| --- | --- |
+| `DATABASE_URL` | Provisioned. Points at a Neon project called **yazlik**. Nothing to do. |
+| `BETTER_AUTH_SECRET` | Generated locally. Fine as is. |
+| `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL` | `http://localhost:3000`. |
+| `CRON_SECRET` | Generated locally. Guards `/api/cron/reminders`. |
+| `STORAGE_DRIVER` | `local` — images write to disk. Set to `blob` plus `BLOB_READ_WRITE_TOKEN` for Vercel Blob. |
+| `RESEND_API_KEY` | Intentionally empty. Emails print to the terminal instead of sending. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Empty. Phase 6 only — see `SETUP-GOOGLE.md` when it lands. |
 
-## Learn More
+### Database
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+pnpm db:push      # apply schema to Neon
+pnpm db:seed      # one owner, one house, three bookings in a known August
+pnpm db:studio    # browse the data
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Double-booking is prevented by a Postgres exclusion constraint on `bookings`, not by
+application code. It lives in a hand-written migration alongside the generated ones, because
+Drizzle won't produce it.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Other commands
 
-## Deploy on Vercel
+```bash
+pnpm typecheck    # tsc --noEmit
+pnpm lint         # eslint
+pnpm build        # production build
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Where to look next
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `HANDOFF.md` — current status, what's blocked on you, what to run to check the work.
+- `DECISIONS.md` — calls made without you, and how to reverse each one.
