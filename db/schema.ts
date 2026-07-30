@@ -1,16 +1,15 @@
 // Yazlık domain schema — the single source of truth for drizzle-kit.
 //
 // better-auth's own tables (user, session, account, verification) live in
-// ./auth-schema.ts, generated with:
-//   npx @better-auth/cli generate --output db/auth-schema.ts
-// That file does not exist yet, so nothing here imports from it. See the note on
-// houses.ownerId below.
+// ./auth-schema.ts, regenerated with `pnpm auth:generate`. Do not hand-edit
+// that file; houses.ownerId is the only thing here that reaches into it.
 //
 // Dates that describe a stay (startDate, endDate, bookableFrom, bookableTo) are
 // plain `date` columns handled as 'YYYY-MM-DD' strings. Check-in day and
 // check-out day — no timestamps, no timezone maths.
 
 import { relations } from "drizzle-orm";
+import { user } from "./auth-schema";
 import {
   boolean,
   date,
@@ -68,11 +67,9 @@ export const houses = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
 
-    // FK to better-auth's `user`.id (text). Declared as a plain text column for
-    // now because db/auth-schema.ts has not been generated yet; once it exists,
-    // add `.references(() => user.id, { onDelete: "cascade" })` here and let
-    // drizzle-kit emit the constraint.
-    ownerId: text("owner_id").notNull(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
 
     /** 12-char nanoid — the unguessable public URL at /h/[slug]. */
     slug: text("slug").notNull().unique(),

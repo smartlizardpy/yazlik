@@ -7,12 +7,26 @@
  */
 import { eq } from "drizzle-orm";
 import { db } from "../db";
+import { user } from "../db/auth-schema";
 import { bookings, houses } from "../db/schema";
 
 const SEED_SLUG = "demo-house";
 const SEED_OWNER = "seed-owner";
+const SEED_EMAIL = "owner@example.com";
 
 async function main() {
+  // A real user row — houses.ownerId is a foreign key into better-auth's table.
+  // Sign in as this address in dev: the magic link prints to the console.
+  await db
+    .insert(user)
+    .values({
+      id: SEED_OWNER,
+      name: "Demo owner",
+      email: SEED_EMAIL,
+      emailVerified: true,
+    })
+    .onConflictDoNothing();
+
   const [existing] = await db
     .select({ id: houses.id })
     .from(houses)
