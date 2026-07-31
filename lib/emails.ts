@@ -158,7 +158,9 @@ const FONT =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 /** The one accent, matching `--primary`. Hex, because mail has no CSS variables. */
-const ACCENT = "#2563eb";
+// Ink, matching the app: this product has no accent hue. Email clients
+// handle dark mode badly and inconsistently, so these stay light-only.
+const ACCENT = "#141210";
 const INK = "#0a0a0a";
 const MUTED = "#737373";
 

@@ -42,3 +42,6 @@ next-env.d.ts
 
 .env*.local
 .uploads/
+
+# Stray log from the Excalidraw MCP server, not part of this project
+excalidraw.log

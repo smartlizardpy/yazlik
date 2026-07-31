@@ -94,9 +94,9 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* The one accent. `bg-brand` / `text-brand` for anything that is not a
-     shadcn <Button variant="default">. Changing --brand below changes every
-     primary action in the product. */
+  /* `bg-brand` / `text-brand` for anything that is not a shadcn
+     <Button variant="default">. --brand is ink, not a hue: see the token
+     block below for why this product has no accent colour. */
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
 
@@ -111,134 +111,149 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Tokens. True neutrals, not warm ones.
-   page #FFFFFF · subtle #F5F5F5 · border #E5E5E5 · text #0A0A0A · muted #737373
-   The single accent is --brand (#2563EB) and it drives --primary.
+   Tokens. Warm paper, ink actions, NO ACCENT HUE.
+
+   paper #FAF8F4 · card #FFFFFF · subtle #F0EDE6 · border #E4DFD5
+   ink #141210 · muted ink #6E6862
+
+   There is deliberately no brand colour. The primary action is ink — the
+   darkest thing on the page — so the only saturated pixels anywhere are the
+   owner's photographs. A blue accent on warm neutrals is what every generated
+   interface looks like, and it made this one look untouched by a person.
+
+   --brand is kept, pointed at ink, because shadcn components reference it.
+   Setting it to a hue is how you'd reintroduce an accent; don't, without
+   deciding what earns it.
+
    Keep the light block, the .dark block and the media block in sync.
 --------------------------------------------------------------------------- */
 :root {
   --radius: 0.625rem; /* 10px */
   color-scheme: light;
 
-  --brand: #2563eb;
-  --brand-foreground: #ffffff;
+  --brand: #141210;
+  --brand-foreground: #faf8f4;
 
-  --background: #ffffff;
-  --foreground: #0a0a0a;
+  --background: #faf8f4;
+  --foreground: #141210;
   --card: #ffffff;
-  --card-foreground: #0a0a0a;
+  --card-foreground: #141210;
   --popover: #ffffff;
-  --popover-foreground: #0a0a0a;
+  --popover-foreground: #141210;
   --primary: var(--brand);
   --primary-foreground: var(--brand-foreground);
-  --secondary: #f5f5f5;
-  --secondary-foreground: #0a0a0a;
-  --muted: #f5f5f5;
-  --muted-foreground: #737373;
-  --accent: #f5f5f5;
-  --accent-foreground: #0a0a0a;
-  --destructive: #b91c1c;
-  --border: #e5e5e5;
-  --input: #e5e5e5;
-  --ring: #0a0a0a;
+  --secondary: #f0ede6;
+  --secondary-foreground: #141210;
+  --muted: #f0ede6;
+  --muted-foreground: #6e6862;
+  --accent: #f0ede6;
+  --accent-foreground: #141210;
+  /* The one non-neutral in the system, and it only ever appears on a refusal:
+     a declined request, a failed save. Warm enough to sit on paper. */
+  --destructive: #9c3328;
+  --border: #e4dfd5;
+  --input: #e4dfd5;
+  --ring: #141210;
 
-  --chart-1: #d4d4d4;
-  --chart-2: #a3a3a3;
-  --chart-3: #737373;
-  --chart-4: #525252;
-  --chart-5: #262626;
+  --chart-1: #d8d2c6;
+  --chart-2: #b3ac9f;
+  --chart-3: #8b847a;
+  --chart-4: #5c564e;
+  --chart-5: #2b2823;
 
-  --sidebar: #fafafa;
-  --sidebar-foreground: #0a0a0a;
+  --sidebar: #f5f2ec;
+  --sidebar-foreground: #141210;
   --sidebar-primary: var(--brand);
   --sidebar-primary-foreground: var(--brand-foreground);
-  --sidebar-accent: #f5f5f5;
-  --sidebar-accent-foreground: #0a0a0a;
-  --sidebar-border: #e5e5e5;
-  --sidebar-ring: #0a0a0a;
+  --sidebar-accent: #f0ede6;
+  --sidebar-accent-foreground: #141210;
+  --sidebar-border: #e4dfd5;
+  --sidebar-ring: #141210;
 }
 
 .dark {
   color-scheme: dark;
 
-  --brand: #2563eb;
-  --brand-foreground: #ffffff;
+  /* Ink and paper swap places: the primary action is now the lightest thing
+     on screen, so it stays the strongest contrast in either mode. */
+  --brand: #f0ede6;
+  --brand-foreground: #141210;
 
-  --background: #0a0a0a;
-  --foreground: #fafafa;
-  --card: #171717;
-  --card-foreground: #fafafa;
-  --popover: #171717;
-  --popover-foreground: #fafafa;
+  --background: #14120f;
+  --foreground: #f0ede6;
+  --card: #1c1a16;
+  --card-foreground: #f0ede6;
+  --popover: #1c1a16;
+  --popover-foreground: #f0ede6;
   --primary: var(--brand);
   --primary-foreground: var(--brand-foreground);
-  --secondary: #262626;
-  --secondary-foreground: #fafafa;
-  --muted: #262626;
-  --muted-foreground: #a3a3a3;
-  --accent: #262626;
-  --accent-foreground: #fafafa;
-  --destructive: #f87171;
-  --border: #262626;
-  --input: #333333;
-  --ring: #e5e5e5;
+  --secondary: #262320;
+  --secondary-foreground: #f0ede6;
+  --muted: #262320;
+  --muted-foreground: #a09889;
+  --accent: #262320;
+  --accent-foreground: #f0ede6;
+  --destructive: #e8917f;
+  --border: #2e2a25;
+  --input: #37322b;
+  --ring: #e4dfd5;
 
-  --chart-1: #404040;
-  --chart-2: #525252;
-  --chart-3: #737373;
-  --chart-4: #a3a3a3;
-  --chart-5: #d4d4d4;
+  --chart-1: #3d3831;
+  --chart-2: #5c564e;
+  --chart-3: #8b847a;
+  --chart-4: #b3ac9f;
+  --chart-5: #d8d2c6;
 
-  --sidebar: #171717;
-  --sidebar-foreground: #fafafa;
+  --sidebar: #1c1a16;
+  --sidebar-foreground: #f0ede6;
   --sidebar-primary: var(--brand);
   --sidebar-primary-foreground: var(--brand-foreground);
-  --sidebar-accent: #262626;
-  --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: #262626;
-  --sidebar-ring: #e5e5e5;
+  --sidebar-accent: #262320;
+  --sidebar-accent-foreground: #f0ede6;
+  --sidebar-border: #2e2a25;
+  --sidebar-ring: #e4dfd5;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
 
-    --brand: #2563eb;
-    --brand-foreground: #ffffff;
+    --brand: #f0ede6;
+    --brand-foreground: #141210;
 
-    --background: #0a0a0a;
-    --foreground: #fafafa;
-    --card: #171717;
-    --card-foreground: #fafafa;
-    --popover: #171717;
-    --popover-foreground: #fafafa;
+    --background: #14120f;
+    --foreground: #f0ede6;
+    --card: #1c1a16;
+    --card-foreground: #f0ede6;
+    --popover: #1c1a16;
+    --popover-foreground: #f0ede6;
     --primary: var(--brand);
     --primary-foreground: var(--brand-foreground);
-    --secondary: #262626;
-    --secondary-foreground: #fafafa;
-    --muted: #262626;
-    --muted-foreground: #a3a3a3;
-    --accent: #262626;
-    --accent-foreground: #fafafa;
-    --destructive: #f87171;
-    --border: #262626;
-    --input: #333333;
-    --ring: #e5e5e5;
+    --secondary: #262320;
+    --secondary-foreground: #f0ede6;
+    --muted: #262320;
+    --muted-foreground: #a09889;
+    --accent: #262320;
+    --accent-foreground: #f0ede6;
+    --destructive: #e8917f;
+    --border: #2e2a25;
+    --input: #37322b;
+    --ring: #e4dfd5;
 
-    --chart-1: #404040;
-    --chart-2: #525252;
-    --chart-3: #737373;
-    --chart-4: #a3a3a3;
-    --chart-5: #d4d4d4;
+    --chart-1: #3d3831;
+    --chart-2: #5c564e;
+    --chart-3: #8b847a;
+    --chart-4: #b3ac9f;
+    --chart-5: #d8d2c6;
 
-    --sidebar: #171717;
-    --sidebar-foreground: #fafafa;
+    --sidebar: #1c1a16;
+    --sidebar-foreground: #f0ede6;
     --sidebar-primary: var(--brand);
     --sidebar-primary-foreground: var(--brand-foreground);
-    --sidebar-accent: #262626;
-    --sidebar-accent-foreground: #fafafa;
-    --sidebar-border: #262626;
-    --sidebar-ring: #e5e5e5;
+    --sidebar-accent: #262320;
+    --sidebar-accent-foreground: #f0ede6;
+    --sidebar-border: #2e2a25;
+    --sidebar-ring: #e4dfd5;
   }
 }
 
