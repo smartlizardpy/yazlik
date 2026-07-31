@@ -10,6 +10,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["lib/**/*.test.ts"],
+    // Server Actions live in app/_actions and are tested with @/db mocked, so
+    // they belong to the same node-environment run as lib.
+    include: ["lib/**/*.test.ts", "app/**/*.test.ts"],
   },
 });

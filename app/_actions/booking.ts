@@ -26,6 +26,11 @@
  * Everything a guest reads comes from `lib/i18n` in the *house's* language.
  * Everything the owner reads is English, per the plan — the dashboard is
  * English only in v1 and their mail should match it.
+ *
+ * Neither of the two emails this file triggers is written here. All five live
+ * in `lib/emails.ts` — one file that knows about escaping, language and the
+ * `.ics`, rather than five inboxes' worth of HTML scattered across the actions
+ * that happen to send them. Both calls are awaited and neither can throw.
  */
 
 import { revalidatePath } from "next/cache";
@@ -33,12 +38,11 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "@/db";
-import { user } from "@/db/auth-schema";
-import { bookings, type Booking } from "@/db/schema";
+import { bookings } from "@/db/schema";
 import { checkRequest, type CheckFailureCode } from "@/lib/availability";
 import { bookingByToken, busyRanges, houseBySlug, houseRules } from "@/lib/bookings";
-import { formatDay, isDateStr, nightsBetween, toStr } from "@/lib/dates";
-import { send } from "@/lib/email";
+import { isDateStr, toStr } from "@/lib/dates";
+import { sendGuestCancelled, sendRequestReceived } from "@/lib/emails";
 import { newToken } from "@/lib/ids";
 import { DEFAULT_LANG, failureMessage, t, toLang, type Lang } from "@/lib/i18n";
 
@@ -186,56 +190,6 @@ const FAILURE_FIELD: Record<CheckFailureCode, string> = {
 };
 
 /* ============================================================
-   MAIL
-   ============================================================ */
-
-const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL ?? "http://localhost:3100";
-
-/** Guest text goes into an owner's mail client. It gets escaped, every time. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-async function ownerEmail(ownerId: string): Promise<string | null> {
-  const [row] = await db
-    .select({ email: user.email })
-    .from(user)
-    .where(eq(user.id, ownerId))
-    .limit(1);
-  return row?.email ?? null;
-}
-
-/** English: owner mail matches the owner dashboard, which is English in v1. */
-function staySummary(booking: Pick<Booking, "startDate" | "endDate" | "guests">): string {
-  const nights = nightsBetween(booking.startDate, booking.endDate);
-  const nightWord = nights === 1 ? "night" : "nights";
-  const guestWord = booking.guests === 1 ? "guest" : "guests";
-  return `${formatDay(booking.startDate)} → ${formatDay(booking.endDate)} · ${nights} ${nightWord} · ${booking.guests} ${guestWord}`;
-}
-
-/**
- * Mail never decides whether a booking exists. The row is already committed by
- * the time this runs, so a dead SMTP provider costs the owner a notification,
- * not the guest their request.
- */
-async function notify(to: string | null, subject: string, lines: string[]) {
-  if (!to) {
-    console.warn("[booking] no owner address to notify:", subject);
-    return;
-  }
-  try {
-    await send({ to, subject, html: lines.join("") });
-  } catch (error) {
-    console.error("[booking] notification failed", error);
-  }
-}
-
-/* ============================================================
    REQUEST
    ============================================================ */
 
@@ -291,25 +245,33 @@ export async function requestBooking(
   }
 
   let token = "";
+  // The row's own id, read back from the insert. The email is built from a
+  // booking, not from six loose variables, and `lib/ics` derives a stable UID
+  // from this id — so it has to be the database's, not one invented here.
+  let id = "";
   let lastError: unknown = null;
 
   // The only realistic failure is a token colliding, which is a redraw away.
   for (let attempt = 0; attempt < 3 && !token; attempt++) {
     const candidate = newToken();
     try {
-      await db.insert(bookings).values({
-        houseId: house.id,
-        kind: "guest",
-        guestName,
-        guestEmail,
-        guests,
-        note: note ?? null,
-        startDate,
-        endDate,
-        status: "pending",
-        token: candidate,
-      });
+      const [row] = await db
+        .insert(bookings)
+        .values({
+          houseId: house.id,
+          kind: "guest",
+          guestName,
+          guestEmail,
+          guests,
+          note: note ?? null,
+          startDate,
+          endDate,
+          status: "pending",
+          token: candidate,
+        })
+        .returning({ id: bookings.id });
       token = candidate;
+      id = row?.id ?? "";
     } catch (error) {
       lastError = error;
       if (!isUniqueViolation(error)) break;
@@ -321,17 +283,19 @@ export async function requestBooking(
     return { ok: false, error: t("form.error.generic", lang) };
   }
 
-  await notify(
-    await ownerEmail(house.ownerId),
-    `${house.name}: ${guestName} asked for ${formatDay(startDate)}`,
-    [
-      `<p><strong>${escapeHtml(guestName)}</strong> asked to stay at ${escapeHtml(house.name)}.</p>`,
-      `<p>${staySummary({ startDate, endDate, guests })}</p>`,
-      note ? `<p><em>${escapeHtml(note)}</em></p>` : "",
-      `<p>${escapeHtml(guestName)} &lt;${escapeHtml(guestEmail)}&gt;</p>`,
-      `<p><a href="${APP_URL}/app">Approve or decline it</a></p>`,
-    ],
-  );
+  await sendRequestReceived(house, {
+    id,
+    kind: "guest",
+    guestName,
+    guestEmail,
+    guests,
+    note: note ?? null,
+    startDate,
+    endDate,
+    status: "pending",
+    declineReason: null,
+    token,
+  });
 
   // The owner's list gained a request; the house calendar gained a pending range.
   revalidatePath("/app", "layout");
@@ -386,16 +350,7 @@ export async function cancelBooking(token: string): Promise<CancelBookingResult>
   // Phase 6 deletes the Google event here, after the row is committed and in a
   // way that cannot fail the cancellation.
 
-  await notify(
-    await ownerEmail(house.ownerId),
-    `${house.name}: ${booking.guestName ?? "a guest"} cancelled`,
-    [
-      `<p><strong>${escapeHtml(booking.guestName ?? "A guest")}</strong> cancelled their stay at ${escapeHtml(house.name)}.</p>`,
-      `<p>${staySummary(booking)}</p>`,
-      `<p>The dates are free again.</p>`,
-      `<p><a href="${APP_URL}/app">Open the dashboard</a></p>`,
-    ],
-  );
+  await sendGuestCancelled(house, booking);
 
   revalidatePath("/app", "layout");
   revalidatePath(`/h/${house.slug}`);
