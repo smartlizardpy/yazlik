@@ -11,9 +11,10 @@
  *    "Dashboard" ever is.
  * 2. **The summer, laid out.** A scrolling strip of the open months with the
  *    weeks filled in — the model every house owner already holds in their head
- *    and the one thing two stacked lists cannot show: *shape*. Ink for the
- *    weeks that are spoken for, a dashed outline underneath for the weeks
- *    somebody has asked about.
+ *    and the one thing two stacked lists cannot show: *shape*. One shelf per
+ *    month, ink across the weeks that are spoken for, and a lane underneath —
+ *    on the same shelf, not floating below it — carrying a dashed outline for
+ *    the weeks somebody has asked about.
  * 3. **The asks**, each one a card with a face on it.
  * 4. **Who is coming**, in exactly the same card.
  * 5. **The link**, which is the whole reason the product exists.
@@ -145,15 +146,21 @@ function initial(b: Booking): string | null {
    A month is `days * DAY_PX` wide and every stay is a slice of it, so the
    strip is to scale: a fortnight looks twice a week. Ten pixels a day puts one
    whole August on a 390px screen with the edge of September showing — enough
-   to say "there is more, push it" without a control — and leaves a week 70px,
-   which is a first name. Carrying the names is the entire point of drawing
-   this rather than listing it.
+   to say "there is more, push it" — and leaves a week 70px, which is a first
+   name. Carrying the names is the entire point of drawing this rather than
+   listing it, so a block too narrow to hold its own name does not go
+   anonymous: the name steps onto the empty shelf beside it. A four-night
+   block reading "Roof repair" in the paper next to it is the whole month
+   understood; the same block silent is a grey smudge in September.
    ============================================================ */
 
 const DAY_PX = 10;
 
-/** Below this a name would be two letters and an ellipsis, so it is left off. */
+/** Below this a name inside a block would be two letters and an ellipsis. */
 const NAME_FITS_PX = 56;
+
+/** So it stands beside the block instead — if there is this much clear shelf. */
+const NAME_BESIDE_PX = 40;
 
 /**
  * A month with fewer days left than this, and nothing in them, is not worth
@@ -250,22 +257,77 @@ function monthsFrom(first: DateStr, last: DateStr): StripMonth[] {
   return out;
 }
 
-/** The part of `span` that falls inside `month`, as percentages of the month. */
-function clip(span: StripSpan, month: StripMonth) {
-  const from = later(span.startDate, month.first);
-  const to = span.endDate < month.next ? span.endDate : month.next;
-  if (to <= from) return null;
+/** One span, clipped to one month and measured for drawing. */
+type Piece = {
+  key: string;
+  label: string;
+  held: boolean;
+  /** Percentages of the month's width. */
+  left: string;
+  width: string;
+  /** Inside the block, on the shelf after it, or — no room either way — not at all. */
+  name: "inside" | "beside" | null;
+  besideLeft: string;
+  besideWidth: string;
+};
 
-  const fromIndex = Number(from.slice(8, 10)) - 1;
-  const toIndex = to === month.next ? month.days : Number(to.slice(8, 10)) - 1;
-  const nights = toIndex - fromIndex;
-  if (nights <= 0) return null;
+/**
+ * Every span that touches `month`, in order, each one told where its name goes.
+ *
+ * Placed as a set rather than one at a time because "is there room beside it"
+ * is a question about the neighbours: the shelf after a block is only free up
+ * to whatever starts next, and a name written across the following stay would
+ * be worse than no name at all.
+ */
+function placeInMonth(spans: readonly StripSpan[], month: StripMonth): Piece[] {
+  const clipped: { span: StripSpan; from: number; to: number }[] = [];
 
-  return {
-    left: `${(fromIndex / month.days) * 100}%`,
-    width: `${(nights / month.days) * 100}%`,
-    roomy: nights * DAY_PX >= NAME_FITS_PX,
-  };
+  for (const span of spans) {
+    const start = later(span.startDate, month.first);
+    const end = span.endDate < month.next ? span.endDate : month.next;
+    if (end <= start) continue;
+
+    const from = Number(start.slice(8, 10)) - 1;
+    const to = end === month.next ? month.days : Number(end.slice(8, 10)) - 1;
+    if (to <= from) continue;
+
+    clipped.push({ span, from, to });
+  }
+
+  clipped.sort((a, b) => a.from - b.from);
+
+  const pct = (days: number) => `${(days / month.days) * 100}%`;
+
+  return clipped.map(({ span, from, to }, index) => {
+    const nights = to - from;
+    // Clear shelf between the end of this block and whatever comes next.
+    const clear = (clipped[index + 1]?.from ?? month.days) - to;
+    const fits = nights * DAY_PX >= NAME_FITS_PX;
+    const beside = !fits && clear * DAY_PX >= NAME_BESIDE_PX;
+
+    return {
+      key: span.key,
+      label: span.label,
+      held: span.held,
+      left: pct(from),
+      width: pct(nights),
+      name: fits ? "inside" : beside ? "beside" : null,
+      besideLeft: pct(to),
+      besideWidth: pct(clear),
+    };
+  });
+}
+
+/** A name that would not fit in its block, standing on the shelf beside it. */
+function BesideName({ piece }: { piece: Piece }) {
+  return (
+    <span
+      style={{ left: piece.besideLeft, width: piece.besideWidth }}
+      className="absolute inset-y-0 flex items-center overflow-hidden ps-1.5 text-xs"
+    >
+      <span className="truncate">{piece.label}</span>
+    </span>
+  );
 }
 
 /* ============================================================
@@ -444,18 +506,25 @@ export default async function DashboardPage() {
 
         {/* Everything drawn here is also written out in the lists below, so the
             strip is a picture and nothing else. Announcing it twice would make
-            it worse to listen to, not better. */}
+            it worse to listen to, not better.
+
+            It runs off the right-hand edge on any phone, so it says so: the
+            last month fades into the paper instead of being sliced through the
+            middle of "September", and a flick settles on a month. A word cut in
+            half reads as a broken layout; a fade reads as more. */}
         <div
           aria-hidden="true"
-          className="-mx-4 overflow-x-auto px-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="-mx-4 snap-x snap-proximity scroll-px-4 overflow-x-auto px-4 [-ms-overflow-style:none] [mask-image:linear-gradient(to_right,#000_calc(100%_-_3rem),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <div className="flex w-max gap-2 pb-1">
             {months.map((month) => {
-              const inside = today >= month.first && today < month.next;
+              const now = today >= month.first && today < month.next;
+              const stays = placeInMonth(staying, month);
+              const asks = placeInMonth(asked, month);
               return (
                 <div
                   key={month.key}
-                  className="shrink-0"
+                  className="shrink-0 snap-start"
                   style={{ width: month.days * DAY_PX }}
                 >
                   <p className="font-heading mb-1.5 text-base leading-none">
@@ -464,9 +533,16 @@ export default async function DashboardPage() {
 
                   {/* A filled shelf, not an outlined box. Bordered white on
                       warm paper reads as an empty text field, which is the last
-                      thing this should look like. */}
-                  <div className="relative h-9 overflow-hidden rounded-md bg-secondary">
-                    {inside ? (
+                      thing this should look like.
+
+                      One shelf per month, and everything about that month is on
+                      it. The asks used to sit in a strip of their own below,
+                      which on a quiet month drew a lone dashed pill floating in
+                      the paper with nothing to belong to. Same shelf, one lane
+                      lower: spoken for on top, asked about underneath, and the
+                      today line crossing both. */}
+                  <div className="relative overflow-hidden rounded-md bg-secondary">
+                    {now ? (
                       <span
                         className="absolute inset-y-0 z-10 w-px bg-foreground/35"
                         style={{
@@ -474,46 +550,54 @@ export default async function DashboardPage() {
                         }}
                       />
                     ) : null}
-                    {staying.map((span) => {
-                      const box = clip(span, month);
-                      if (!box) return null;
-                      return (
+
+                    <div className="relative h-9">
+                      {stays.map((piece) => (
                         <span
-                          key={span.key}
-                          style={{ left: box.left, width: box.width }}
+                          key={piece.key}
+                          style={{ left: piece.left, width: piece.width }}
                           className={
-                            span.held
+                            piece.held
                               ? "absolute inset-y-0 flex items-center overflow-hidden rounded-sm bg-foreground/25 px-1.5 text-xs"
                               : "absolute inset-y-0 flex items-center overflow-hidden rounded-sm bg-foreground px-1.5 text-xs text-background"
                           }
                         >
-                          {box.roomy ? (
-                            <span className="truncate">{span.label}</span>
+                          {piece.name === "inside" ? (
+                            <span className="truncate">{piece.label}</span>
                           ) : null}
                         </span>
-                      );
-                    })}
-                  </div>
+                      ))}
+                      {stays.map((piece) =>
+                        piece.name === "beside" ? (
+                          <BesideName key={`${piece.key}-name`} piece={piece} />
+                        ) : null,
+                      )}
+                    </div>
 
-                  {asked.length > 0 ? (
-                    <div className="relative mt-1 h-5">
-                      {asked.map((span) => {
-                        const box = clip(span, month);
-                        if (!box) return null;
-                        return (
+                    {/* The lane only exists when somebody has asked, so a house
+                        with no unanswered requests keeps a single-height shelf
+                        rather than a strip of empty gutter. */}
+                    {asked.length > 0 ? (
+                      <div className="relative h-7 bg-foreground/5">
+                        {asks.map((piece) => (
                           <span
-                            key={span.key}
-                            style={{ left: box.left, width: box.width }}
-                            className="absolute inset-y-0 flex items-center overflow-hidden rounded-sm border border-dashed border-foreground/55 px-1.5 text-xs"
+                            key={piece.key}
+                            style={{ left: piece.left, width: piece.width }}
+                            className="absolute inset-y-1 flex items-center overflow-hidden rounded-sm border border-dashed border-foreground/55 px-1.5 text-xs"
                           >
-                            {box.roomy ? (
-                              <span className="truncate">{span.label}</span>
+                            {piece.name === "inside" ? (
+                              <span className="truncate">{piece.label}</span>
                             ) : null}
                           </span>
-                        );
-                      })}
-                    </div>
-                  ) : null}
+                        ))}
+                        {asks.map((piece) =>
+                          piece.name === "beside" ? (
+                            <BesideName key={`${piece.key}-name`} piece={piece} />
+                          ) : null,
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}

@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /**
+   * Hosts allowed to pull dev-only resources like the HMR socket.
+   *
+   * Next 16 blocks these cross-origin by default, which is right — but it means
+   * opening the app from a phone on the same wifi gets a working page with dead
+   * hot reload and a warning in the log. Development only; it has no effect on
+   * a production build. Add whatever LAN address you actually browse from.
+   */
+  allowedDevOrigins: ["192.168.1.114"],
   images: {
     /**
      * Vercel Blob, for when `STORAGE_DRIVER=blob`.

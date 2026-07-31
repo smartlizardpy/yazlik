@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import puppeteer from "puppeteer-core";
 
-const BASE = "http://localhost:3100";
+const BASE = "http://192.168.1.114:3100";
 const LOG = process.argv[2];
 const OUT = process.argv[3];
 const CHROME = "/usr/bin/google-chrome-stable";
@@ -19,10 +19,16 @@ const CHROME = "/usr/bin/google-chrome-stable";
 // iPhone 14-ish. The whole product is designed at this width.
 const VIEWPORT = { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
 
-async function magicLink(page) {
-  await page.goto(`${BASE}/sign-in`, { waitUntil: "networkidle2" });
-  await page.type('input[type="email"]', "owner@example.com");
-  await page.click('button[type="submit"]');
+async function magicLink() {
+  // Hit the API directly rather than driving the form: the sign-in screen is
+  // still being redesigned and a changed selector should not break screenshots.
+  await fetch(`${BASE}/api/auth/sign-in/magic-link`, {
+    method: "POST",
+    // better-auth checks Origin against its trusted origins, and node's fetch
+    // sends one that does not match BETTER_AUTH_URL. Say it explicitly.
+    headers: { "Content-Type": "application/json", Origin: BASE },
+    body: JSON.stringify({ email: "owner@example.com", callbackURL: "/app" }),
+  });
   // The sign-in POST itself takes a couple of seconds against Neon, and the
   // email is printed only after it resolves — so poll rather than guess.
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -59,7 +65,7 @@ try {
   const page = await browser.newPage();
   await page.setViewport(VIEWPORT);
 
-  const link = await magicLink(page);
+  const link = await magicLink();
   await page.goto(link, { waitUntil: "networkidle2" });
   console.log("signed in:", page.url());
 

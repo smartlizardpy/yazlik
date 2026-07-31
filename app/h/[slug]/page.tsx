@@ -277,14 +277,19 @@ async function guestNamesByRange(house: House): Promise<Map<string, string>> {
    ============================================================ */
 
 /**
- * The front of the invitation card.
+ * The front of the invitation card, in two forms.
  *
- * Full-bleed, bottom-anchored, and the same block whether or not there is a
- * photograph in it — that is the point. The page used to begin with a bare
- * `<h1>` at 22px, which meant a house with no photos opened on a heading
- * against nothing. An empty state should get quieter, not disappear: with no
- * picture the block keeps its height and turns into paper one shade deeper than
- * the page, and the name does the work at forty points in the display face.
+ * **With a photograph** it is full-bleed and bottom-anchored: half the glass,
+ * the picture doing the talking, the words sitting on it under a scrim. That is
+ * what makes the page open like the front of a card rather than a banner.
+ *
+ * **Without one** it is a different composition, not the same one with a hole
+ * in it. Holding 52svh of empty paper above the name gave a new house — and
+ * every house is a new house on day one — six hundred pixels of nothing to
+ * scroll past before it said who it was. So the block stops being a stage for a
+ * picture and becomes the invitation itself: deeper paper, its height set by
+ * the three lines on it, and enough room around them that the name reads as
+ * written rather than stranded. Same words, same order, same forty points.
  *
  * `black/70` and `white` are the only colours in this file that are not tokens,
  * and they are on the scrim over a photograph, where the contrast has to hold
@@ -304,56 +309,38 @@ function Hero({
     country: house.country,
   });
 
-  return (
-    <header
-      className={cn(
-        "relative -mx-4 flex h-[52svh] max-h-[460px] min-h-[300px] flex-col justify-end overflow-hidden",
-        photo ? null : "border-b border-border bg-secondary",
-      )}
-    >
-      {photo ? (
-        <>
-          <Image
-            src={photo.url}
-            alt={photo.alt?.trim() || house.name}
-            fill
-            sizes="(max-width: 640px) 100vw, 560px"
-            // The first thing on the page and the thing someone is waiting for.
-            loading="eager"
-            fetchPriority="high"
-            className="object-cover"
-          />
-          <div
-            aria-hidden="true"
-            className="absolute inset-0 bg-linear-to-t from-black/70 via-black/25 to-transparent"
-          />
-        </>
-      ) : null}
-
-      <div
-        className={cn(
-          "relative flex flex-col gap-1 px-4 pb-8",
-          photo ? "text-white" : null,
-        )}
-      >
+  if (!photo) {
+    return (
+      <header className="-mx-4 flex flex-col border-b border-border bg-secondary px-4 pt-12 pb-11">
         {/* The first words. Not the town, not the rules — the invitation. */}
-        <p
-          className={cn(
-            "text-sm",
-            photo ? "text-white/75" : "text-muted-foreground",
-          )}
-        >
-          {t("house.invite", lang)}
-        </p>
+        <p className="text-sm text-muted-foreground">{t("house.invite", lang)}</p>
+        <h1 className="mt-2.5 text-3xl text-balance">{house.name}</h1>
+        <p className="mt-3 text-sm text-muted-foreground">{town}</p>
+      </header>
+    );
+  }
+
+  return (
+    <header className="relative -mx-4 flex h-[52svh] max-h-[460px] min-h-[300px] flex-col justify-end overflow-hidden">
+      <Image
+        src={photo.url}
+        alt={photo.alt?.trim() || house.name}
+        fill
+        sizes="(max-width: 640px) 100vw, 560px"
+        // The first thing on the page and the thing someone is waiting for.
+        loading="eager"
+        fetchPriority="high"
+        className="object-cover"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-linear-to-t from-black/70 via-black/25 to-transparent"
+      />
+
+      <div className="relative flex flex-col gap-1 px-4 pb-8 text-white">
+        <p className="text-sm text-white/75">{t("house.invite", lang)}</p>
         <h1 className="text-3xl text-balance">{house.name}</h1>
-        <p
-          className={cn(
-            "text-sm",
-            photo ? "text-white/85" : "text-muted-foreground",
-          )}
-        >
-          {town}
-        </p>
+        <p className="text-sm text-white/85">{town}</p>
       </div>
     </header>
   );
@@ -422,9 +409,14 @@ export default async function HousePage(props: PageProps<"/h/[slug]">) {
         // No top padding: the hero runs to the top of the glass, which is what
         // makes it read as the front of a card rather than a banner on a page.
         "flex flex-col gap-8 pb-10",
-        // Clears the pinned bar in request-sheet.tsx. Keep the two in step: the
-        // bar must never cover the last row of the calendar.
-        open && "pb-[calc(7.5rem+env(safe-area-inset-bottom))]",
+        // Clears the pinned bar in request-sheet.tsx, which is at most
+        // 1 + 12 + 24 + 8 + 48 = 93px of its own plus its bottom inset — a
+        // hairline, the chosen dates, the gap and a 48px button. 9rem leaves
+        // roughly the page's own rhythm of paper under the last row of the
+        // calendar rather than the 15px the old 7.5rem left, which cleared the
+        // bar arithmetically and still read as the grid being sat on. Keep the
+        // two in step: the bar must never cover the last row.
+        open && "pb-[calc(9rem+env(safe-area-inset-bottom))]",
       )}
     >
       <Hero house={house} lang={lang} photo={cover ?? null} />

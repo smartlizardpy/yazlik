@@ -1,11 +1,22 @@
 /**
  * `/b/[token]` — the one page a guest owns.
  *
- * They land here the second they send a request, and they come back to it from
- * the email. It is **public**: there is no session in this file and there must
- * never be one. The token is the whole credential, which is why it is sixteen
- * characters of unguessable alphabet and why a wrong one gets `notFound()` with
- * nothing in the response to say whether it was close.
+ * They land here the second they ask, and they come back to it from the email.
+ * It is **public**: there is no session in this file and there must never be
+ * one. The token is the whole credential, which is why it is sixteen characters
+ * of unguessable alphabet and why a wrong one gets `notFound()` with nothing in
+ * the response to say whether it was close.
+ *
+ * ### What this page is
+ *
+ * Somebody has just been given a summer house for a week. That is the news, and
+ * for a while this page buried it under a five-row table — Arrive / Leave /
+ * Nights / Guests / Booked by — which is the layout of an order confirmation.
+ * The table is gone. **The sentence is the page**: "The house is yours", at the
+ * largest size in the display face, then the week said out loud, then the house,
+ * then what you need to get in. Nothing else competes with it.
+ *
+ * "Booked by: Selin" was shown *to Selin*. Cut, along with the rest of the `dl`.
  *
  * ### The privacy split is enforced here
  *
@@ -18,14 +29,17 @@
  *
  * ### Four states, one page
  *
- * Pending, confirmed, declined, cancelled. Each says what is true and what
- * happens next; none of them apologise, and none of them shout. The status
- * chip borrows the calendar's language rather than colour — a dashed outline is
- * "waiting", a solid black fill is "yours", a flat neutral fill is "over" —
- * so the page reads the same in greyscale.
+ * Each says what is true and what happens next; none of them apologise, and
+ * none of them shout. The state is carried by the **headline and the date
+ * block**, not by a chip: the block is a white card when the week is yours, a
+ * dashed outline while it is a question, and flat grey once it is over — the
+ * calendar's own vocabulary, at the size of the thing it describes. A 190px
+ * status pill sitting next to the title, which is what used to say this, said it
+ * in the voice of a ticketing system and out-shouted the title while it did.
  *
- * The `.ics` download and every email belong to Phase 5 and are deliberately
- * absent.
+ * A decline is not a system rejection. It is someone you know saying not that
+ * week, so if the owner wrote a reason it *is* the content of the page, in their
+ * words, at the size of a sentence a person meant.
  */
 
 import { cache } from "react";
@@ -33,6 +47,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowRightIcon } from "lucide-react";
 import { and, asc, eq, inArray } from "drizzle-orm";
 
 import { Button } from "@/components/ui/button";
@@ -40,7 +55,15 @@ import { db } from "@/db";
 import { guideSections, images, type BookingStatus } from "@/db/schema";
 import { bookingByToken } from "@/lib/bookings";
 import { nightsBetween, toStr } from "@/lib/dates";
-import { DEFAULT_LANG, dayLabel, t, tn, toLang, type Lang } from "@/lib/i18n";
+import {
+  DEFAULT_LANG,
+  humanRange,
+  t,
+  tn,
+  toLang,
+  type Lang,
+} from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 
 import { CancelButton } from "./cancel-button";
 
@@ -165,33 +188,54 @@ async function arrivalPacket(houseId: string): Promise<PacketSection[]> {
 }
 
 /* ============================================================
-   PRESENTATION
+   COPY
    ============================================================ */
 
 /**
- * The status, in the calendar's vocabulary rather than in colour.
+ * The headline, which is the whole page.
  *
- * Waiting is a dashed outline, yours is a solid black fill, over is a flat
- * neutral — exactly what the same four states look like on `/h/[slug]`. Nothing
- * here is red or green, so the page survives colourblindness and a greyscale
- * screenshot without a legend.
+ * One sentence per state, and it is the thing the reader came for: whether the
+ * week is theirs. "Your stay" — the old title — is a filing label, true of all
+ * four states and news in none of them.
  */
-const STATUS_CHIP: Record<BookingStatus, string> = {
-  pending:
-    "border border-dashed border-muted-foreground/70 text-muted-foreground",
-  confirmed: "bg-foreground text-background",
-  declined: "bg-muted text-muted-foreground",
-  cancelled: "bg-muted text-muted-foreground",
+const TITLE_KEY: Record<BookingStatus, string> = {
+  pending: "booking.pending.title",
+  confirmed: "booking.yours",
+  declined: "booking.declined.title",
+  cancelled: "booking.cancelled.title",
 };
 
-/** One row of the stay: label on the left, value on the right, rule underneath. */
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-border py-2 last:border-0">
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className="num text-sm">{value}</dd>
-    </div>
-  );
+/**
+ * The state, in the calendar's language rather than in colour.
+ *
+ * A white card for a week that is yours, a dashed outline while it is still a
+ * question, a flat grey fill once it is over — the same three treatments the
+ * grid on `/h/[slug]` and the summer strip on `/app` use for the same three
+ * things. Nothing here is red or green, so the page reads in greyscale and
+ * survives a colourblind eye without a legend.
+ */
+const DATE_BLOCK: Record<BookingStatus, string> = {
+  pending: "border border-dashed border-foreground/40",
+  confirmed: "bg-card ring-1 ring-foreground/10",
+  declined: "bg-secondary",
+  cancelled: "bg-secondary",
+};
+
+/**
+ * How long they have been waiting, said the way a person would.
+ *
+ * Waiting with no sense of time is the worst part of a pending request: the
+ * page said the owner would answer "soon" and gave the reader no way to judge
+ * whether soon had already been and gone. Two days is patience; six days is a
+ * nudge, and the guest is the one who gets to decide which.
+ */
+function waitingLine(createdAt: Date, lang: Lang): string {
+  const days = nightsBetween(toStr(createdAt), toStr(new Date()));
+  if (days <= 0) return t("booking.waiting.today", lang);
+  if (days === 1) return t("booking.waiting.yesterday", lang);
+  return t("booking.waiting.days", lang, {
+    days: tn("count.days", days, lang),
+  });
 }
 
 /* ============================================================
@@ -217,7 +261,11 @@ export default async function BookingPage(props: PageProps<"/b/[token]">) {
   const nights = nightsBetween(booking.startDate, booking.endDate);
   const reason = status === "declined" ? booking.declineReason?.trim() : null;
   const note = booking.note?.trim();
-  const name = booking.guestName?.trim();
+
+  // Over, one way or the other. The week is not coming back on this page, so
+  // the dates go quiet and the house stops being a place you are going and
+  // becomes one you could ask about again.
+  const over = status === "declined" || status === "cancelled";
 
   // A guest may cancel while there is something to cancel. Declined and
   // cancelled are already over, and a button that only ever explains why it
@@ -227,92 +275,112 @@ export default async function BookingPage(props: PageProps<"/b/[token]">) {
   return (
     // The root layout is `lang="en"`; this subtree may not be. Saying so here is
     // what makes a screen reader pronounce a Turkish house in Turkish.
-    <article lang={house.language} className="flex flex-col gap-6 py-6">
-      {/* Status ------------------------------------------------------------- */}
-      <header className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h1 className="text-xl font-semibold tracking-tight">
-            {t("booking.title", lang)}
-          </h1>
-          <span
-            className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_CHIP[status]}`}
-          >
-            {t(`status.${status}`, lang)}
-          </span>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {house.name} · {t("house.town", lang, {
-            town: house.town,
-            country: house.country,
-          })}
-        </p>
-      </header>
+    <article lang={house.language} className="flex flex-col gap-6 pt-10 pb-12">
+      {/* The news ----------------------------------------------------------- */}
+      {/* Forty points, display face, and the only thing above the fold that is
+          not a date. Somebody has been given a house for a week; the page has
+          one job and this is it. */}
+      <h1 className="text-3xl text-balance">{t(TITLE_KEY[status], lang)}</h1>
 
-      <p className="text-base">{t(`status.${status}.body`, lang)}</p>
+      {/* The owner's own words, on a decline, before anything else. Not quoted
+          in a grey box at 13px like an error detail — this is a person who
+          knows the reader saying no, and it is the content of the page. */}
+      {status === "declined" ? (
+        reason ? (
+          <section aria-labelledby="reason-heading" className="flex flex-col gap-2">
+            <h2
+              id="reason-heading"
+              className="font-sans text-xs font-medium text-muted-foreground"
+            >
+              {t("booking.declineReason", lang)}
+            </h2>
+            <p className="font-heading text-lg text-pretty whitespace-pre-line">
+              {reason}
+            </p>
+          </section>
+        ) : (
+          <p className="text-base">{t("booking.declined.body", lang)}</p>
+        )
+      ) : null}
 
-      {/* The owner's own words, quoted and not softened. Only ever written on a
-          decline, so this block cannot appear anywhere it would read oddly. */}
-      {reason ? (
-        <section
-          aria-labelledby="reason-heading"
-          className="flex flex-col gap-1 border-l-2 border-border pl-3"
+      {/* The week ------------------------------------------------------------ */}
+      {/* Said, not filed: "Tue 4 – Mon 10 Aug", the way it would be said out
+          loud in the group chat. `rangeLabel` — "4 August 2026 – 10 August
+          2026" — belongs in the .ics and the emails, where a date has to
+          survive being read out of context six months later. */}
+      <div className={cn("rounded-xl px-4 py-5", DATE_BLOCK[status])}>
+        <p
+          className={cn(
+            "num font-heading text-2xl text-balance",
+            over && "text-muted-foreground",
+          )}
         >
-          <h2
-            id="reason-heading"
-            className="text-xs font-medium text-muted-foreground"
-          >
-            {t("booking.declineReason", lang)}
-          </h2>
-          <p className="text-base whitespace-pre-line">{reason}</p>
-        </section>
+          {humanRange(booking.startDate, booking.endDate, lang)}
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {tn("count.nights", nights, lang)},{" "}
+          {tn("count.people", booking.guests, lang)}
+        </p>
+      </div>
+
+      {/* Still a question ---------------------------------------------------- */}
+      {status === "pending" ? (
+        <div className="flex flex-col gap-1">
+          {/* The one thing a waiting guest actually wants to know: it arrived,
+              and they will not have to keep checking. */}
+          <p className="text-base">{t("status.pending.body", lang)}</p>
+          <p className="text-sm text-muted-foreground">
+            {waitingLine(booking.createdAt, lang)}
+          </p>
+        </div>
       ) : null}
 
-      {/* The stay ----------------------------------------------------------- */}
-      <section aria-labelledby="dates-heading" className="flex flex-col gap-2">
-        <h2 id="dates-heading" className="text-sm font-medium">
-          {t("booking.dates", lang)}
-        </h2>
-        <dl className="flex flex-col">
-          <Row
-            label={t("booking.arrive", lang)}
-            value={dayLabel(booking.startDate, lang)}
-          />
-          <Row
-            label={t("booking.leave", lang)}
-            value={dayLabel(booking.endDate, lang)}
-          />
-          <Row
-            label={t("booking.nights", lang)}
-            value={tn("count.nights", nights, lang)}
-          />
-          <Row
-            label={t("booking.guests", lang)}
-            value={tn("count.guests", booking.guests, lang)}
-          />
-          {name ? <Row label={t("booking.name", lang)} value={name} /> : null}
-        </dl>
-      </section>
-
-      {/* What they wrote when they asked. Theirs, so they get to see it. */}
-      {note ? (
-        <section aria-labelledby="note-heading" className="flex flex-col gap-1">
-          <h2
-            id="note-heading"
-            className="text-xs font-medium text-muted-foreground"
-          >
-            {t("booking.note", lang)}
-          </h2>
-          <p className="text-base whitespace-pre-line">{note}</p>
-        </section>
+      {status === "cancelled" ? (
+        <p className="text-base">{t("booking.cancelled.body", lang)}</p>
       ) : null}
 
-      {/* Arrival packet ------------------------------------------------------ */}
+      {/* Onwards ------------------------------------------------------------- */}
+      {/* The week is yours, so the useful thing is to put it where the rest of
+          your life is. Ink, full width, and the only primary action on the
+          page — `/api/ics/[token]` serves the file and 404s on anything that is
+          not a confirmed guest stay, so this button cannot exist without one. */}
+      {status === "confirmed" ? (
+        <Button asChild className="h-12 w-full text-base">
+          <a href={`/api/ics/${booking.token}`}>{t("booking.calendar", lang)}</a>
+        </Button>
+      ) : null}
+
+      {/* The house ----------------------------------------------------------- */}
+      {/* Its name in the display face, because the name is the point — this is
+          somewhere, not a listing. Once the week is over the second line stops
+          being an address and becomes the way back in. */}
+      <Link
+        href={`/h/${house.slug}`}
+        className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-foreground/25 px-4 py-3"
+      >
+        <span className="min-w-0">
+          <span className="font-heading block text-lg break-words">
+            {house.name}
+          </span>
+          <span className="block text-sm text-muted-foreground">
+            {over
+              ? t("booking.askAgain", lang)
+              : t("house.town", lang, {
+                  town: house.town,
+                  country: house.country,
+                })}
+          </span>
+        </span>
+        <ArrowRightIcon className="size-5 shrink-0" aria-hidden="true" />
+      </Link>
+
+      {/* Getting in ---------------------------------------------------------- */}
       {/* Confirmed only, and only when the owner has actually written some. An
           empty "Before you arrive" heading promises a door code that is not
           there. */}
       {packet.length > 0 ? (
-        <section aria-labelledby="packet-heading" className="flex flex-col gap-4">
-          <h2 id="packet-heading" className="text-sm font-medium">
+        <section aria-labelledby="packet-heading" className="flex flex-col gap-5">
+          <h2 id="packet-heading" className="text-lg">
             {t("booking.packet", lang)}
           </h2>
           {packet.map((section) => (
@@ -352,22 +420,33 @@ export default async function BookingPage(props: PageProps<"/b/[token]">) {
         </p>
       ) : null}
 
-      {/* Onwards ------------------------------------------------------------- */}
-      <div className="flex flex-col gap-3">
-        <Button asChild variant="outline" className="h-11 w-full text-base">
-          <Link href={`/h/${house.slug}`}>{t("booking.house.link", lang)}</Link>
-        </Button>
+      {/* What they wrote when they asked. Theirs, so they get to see it — and
+          on a decline or a cancellation it is a sentence about a week that is
+          not happening, which is not worth re-reading. */}
+      {note && cancellable ? (
+        <section aria-labelledby="note-heading" className="flex flex-col gap-1">
+          <h2
+            id="note-heading"
+            className="font-sans text-xs font-medium text-muted-foreground"
+          >
+            {t("booking.note", lang)}
+          </h2>
+          <p className="border-l border-border pl-3 text-base whitespace-pre-line">
+            {note}
+          </p>
+        </section>
+      ) : null}
 
-        {cancellable ? (
+      {/* Last of all --------------------------------------------------------- */}
+      {/* Cancelling used to sit directly under "See the house", which made the
+          most visually available thing to do on a holiday confirmation cancel
+          it. It is a real door and it stays unlocked, but it is at the bottom,
+          below a rule, at the size of a footnote. */}
+      {cancellable ? (
+        <div className="mt-2 border-t border-border pt-4">
           <CancelButton token={booking.token} language={lang} />
-        ) : null}
-      </div>
-
-      <p className="num text-xs text-muted-foreground">
-        {t("booking.requested", lang, {
-          date: dayLabel(toStr(booking.createdAt), lang),
-        })}
-      </p>
+        </div>
+      ) : null}
     </article>
   );
 }

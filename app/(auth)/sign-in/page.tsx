@@ -8,10 +8,15 @@ export const metadata: Metadata = {
 
 export default function SignInPage() {
   return (
-    <div className="flex flex-col gap-6">
-      <p className="text-sm font-medium tracking-tight text-muted-foreground">
-        Yazlık
-      </p>
+    <div className="flex flex-col gap-7">
+      {/*
+        The product's own name, on the one page that carries it. It was 15px of
+        grey — the quietest thing on its own front door — which left the screen
+        looking like a form some other site had embedded. It is a masthead, so
+        it gets the display face and the room to be one.
+      */}
+      <p className="font-heading text-xl">Yazlık</p>
+
       {/*
         The heading lives inside the client component: once the link is sent the
         whole panel changes, heading included, rather than leaving "Sign in"

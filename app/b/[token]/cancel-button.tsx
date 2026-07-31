@@ -8,10 +8,18 @@
  * unstyled, untranslatable, and on iOS it can be suppressed entirely — three
  * ways for a destructive action to either look broken or fire unannounced.
  *
- * The confirm row splits in two and puts "Keep it" on the left, under where the
- * trigger's centre was, so a thumb that was already moving lands on the safe
- * button. Focus moves there too, which makes the question the first thing a
- * screen reader hears rather than the last.
+ * The confirm row splits in two and puts "Keep it" on the left, so a thumb that
+ * was already moving lands on the safe button. Focus moves there too, which
+ * makes the question the first thing a screen reader hears rather than the last.
+ *
+ * ### It is a footnote, not a button
+ *
+ * The trigger is small, quiet and last on the page — it used to be a full-width
+ * control sitting directly under "See the house", which made cancelling the most
+ * visually available thing to do on a holiday confirmation. It keeps a 44px
+ * target because a small tap target is a different sin from a small label, and
+ * the *question* it opens is full size: once you have said you mean it, the two
+ * answers should be easy to hit and impossible to confuse.
  *
  * ### After it works
  *
@@ -91,9 +99,9 @@ export function CancelButton({ token, language }: CancelButtonProps) {
           type="button"
           variant="ghost"
           onClick={() => setConfirming(true)}
-          className="h-11 w-full text-base text-muted-foreground"
+          className="h-11 self-start px-0 text-sm font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
         >
-          {t("booking.cancel", language)}
+          {t("booking.cancel.link", language)}
         </Button>
         {error ? (
           <p role="alert" className="text-xs text-destructive">
