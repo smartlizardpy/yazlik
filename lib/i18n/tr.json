@@ -109,6 +109,7 @@
   "form.step.progress": "{total} adımdan {step}. adım",
   "form.step.reply": "Yanıt nereye gelsin?",
   "form.step.say": "Ev sahibinin bilmesi gereken bir şey var mı?",
+  "form.step.when": "Ne zaman gelmek istersiniz?",
   "form.step.when.missing": "Önce gecelerinizi seçin.",
   "form.step.who": "Kimler geliyor?",
   "form.submit": "İsteği gönder",

@@ -109,6 +109,7 @@
   "form.step.progress": "Step {step} of {total}",
   "form.step.reply": "Where should the answer go?",
   "form.step.say": "Anything the owner should know?",
+  "form.step.when": "When would you like to come?",
   "form.step.when.missing": "Choose your nights first.",
   "form.step.who": "Who's coming?",
   "form.submit": "Send request",
