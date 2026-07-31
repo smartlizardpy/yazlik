@@ -31,6 +31,7 @@ import Image from "next/image";
 import { ImageIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { DEFAULT_LANG, t, type Lang } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /* ============================================================
@@ -71,6 +72,12 @@ export type PhotoStripProps = {
   onDelete?: DeletePhoto;
   /** Overrides the empty-state line. */
   emptyMessage?: string;
+  /**
+   * Language for the accessible names. The guest page passes the house's
+   * language; the owner's settings screen is English only, so it can omit this.
+   * Without it a screen reader announces a Turkish house in English.
+   */
+  language?: Lang;
   className?: string;
 };
 
@@ -84,10 +91,22 @@ export type PhotoStripProps = {
  * Never "image": a screen reader already says "image". The house name and the
  * photo's place in the strip are the two things we genuinely know.
  */
-function altFor(photo: StripPhoto, index: number, total: number, houseName: string) {
+function altFor(
+  photo: StripPhoto,
+  index: number,
+  total: number,
+  houseName: string,
+  language: Lang,
+) {
   const own = photo.alt?.trim();
   if (own) return own;
-  return total > 1 ? `${houseName}, photo ${index + 1} of ${total}` : houseName;
+  return total > 1
+    ? t("photos.altNth", language, {
+        name: houseName,
+        index: String(index + 1),
+        total: String(total),
+      })
+    : houseName;
 }
 
 /* ============================================================
@@ -99,6 +118,7 @@ export function PhotoStrip({
   houseName,
   onDelete,
   emptyMessage,
+  language = DEFAULT_LANG,
   className,
 }: PhotoStripProps) {
   // Which tile is asking "are you sure?", and which is mid-delete. One at a
@@ -157,7 +177,7 @@ export function PhotoStrip({
       // Focusable so the strip can be scrolled with a keyboard: the scrollbar
       // is hidden, and in the guest view there is nothing inside to tab to.
       tabIndex={0}
-      aria-label={`Photos of ${houseName}`}
+      aria-label={t("photos.aria", language, { name: houseName })}
       className={cn(
         "flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg",
         "scroll-p-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
@@ -168,7 +188,7 @@ export function PhotoStrip({
       {photos.map((photo, index) => {
         const isConfirming = confirming === photo.id;
         const isRemoving = removing === photo.id;
-        const alt = altFor(photo, index, total, houseName);
+        const alt = altFor(photo, index, total, houseName, language);
 
         return (
           <li
@@ -199,7 +219,7 @@ export function PhotoStrip({
               <button
                 type="button"
                 onClick={() => setConfirming(photo.id)}
-                aria-label={`Remove ${alt}`}
+                aria-label={t("photos.remove", language, { alt })}
                 className="absolute top-2 right-2 flex size-11 items-center justify-center rounded-full bg-background/85 text-foreground backdrop-blur transition-colors hover:bg-background focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 <XIcon className="size-5" aria-hidden="true" />
