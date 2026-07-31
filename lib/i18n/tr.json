@@ -16,7 +16,7 @@
   "booking.cancel.yes": "Evet, iptal et",
   "booking.cancelled.body": "{owner} haberdar edildi. Artık sizin için tutulan bir tarih yok.",
   "booking.cancelled.body.anon": "Geceler eve geri döndü. Artık sizin için tutulan bir tarih yok.",
-  "booking.cancelled.title": "O haftayı geri verdiniz",
+  "booking.cancelled.title": "O haftadan vazgeçtiniz",
   "booking.dates": "Tarihler",
   "booking.declineReason": "Ev sahibinin notu",
   "booking.declined.body": "{owner} o geceleri veremiyor. Başka bir hafta sizin olabilir.",

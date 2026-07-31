@@ -62,30 +62,39 @@ describe("humanRange", () => {
   });
 
   describe("Turkish", () => {
-    // Turkish puts the weekday after the date — `18 Ağu Sal`, not `Sal 18
-    // Ağu`. Same information, the locale's own order.
-    it("says the month once inside a single month", () => {
+    // A Turkish range carries no weekdays, and writes the month out in full.
+    //
+    // The English shape leads with the weekday, so dropping the shared month
+    // off the near end still reads: `Tue 18 – Sun 23 Aug`. Turkish orders it
+    // day, month, weekday, and the same trick produced `18 Sal – 23 Ağu Paz` —
+    // the month arriving late with two weekdays dangling off the ends. It was
+    // reported from the running app as simply wrong, and it was: nobody writes
+    // a date to their family that way. `18 – 23 Ağustos` is what a Turk sends.
+    //
+    // A single day is different and keeps its weekday, because there the word
+    // order is not fighting anything: `18 Ağu Sal`.
+    it("says the month once, in full, inside a single month", () => {
       expect(
         humanRange("2026-08-18", "2026-08-23", "tr", { currentYear: NOW }),
-      ).toBe("18 Sal – 23 Ağu Paz");
+      ).toBe("18 – 23 Ağustos");
     });
 
     it("gives each end its own month across a boundary", () => {
       expect(
         humanRange("2026-08-29", "2026-09-02", "tr", { currentYear: NOW }),
-      ).toBe("29 Ağu Cmt – 2 Eyl Çar");
+      ).toBe("29 Ağustos – 2 Eylül");
     });
 
     it("says the year only on the end that is not this year", () => {
       expect(
         humanRange("2026-12-29", "2027-01-02", "tr", { currentYear: NOW }),
-      ).toBe("29 Ara Sal – 2 Oca 2027 Cmt");
+      ).toBe("29 Aralık – 2 Ocak 2027");
     });
 
     it("keeps both ends for a single night", () => {
       expect(
         humanRange("2026-08-18", "2026-08-19", "tr", { currentYear: NOW }),
-      ).toBe("18 Sal – 19 Ağu Çar");
+      ).toBe("18 – 19 Ağustos");
     });
 
     it("collapses a zero-length range to one day", () => {

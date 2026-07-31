@@ -1006,27 +1006,31 @@ export default async function DashboardPage() {
 
       {/* The link ----------------------------------------------------------- */}
       {/* The mechanism the whole product exists to deliver, so it is a target
-          you could hit with your eyes shut. It takes the ink only when there is
-          no ask waiting: exactly one primary action per screen, and an unanswered
-          request outranks everything.
+          you could hit with your eyes shut — and it takes the ink, because when
+          nobody has asked for anything there is nothing else on this screen to
+          do and sending the link is the entire job.
+
+          It is only here in that state now. There is a Share tab an inch below
+          it at all times, and a second, outlined route to the same screen
+          stacked directly on top of its own tab is the sort of thing that makes
+          an app feel assembled rather than designed. When an ask is waiting,
+          answering it outranks everything and the tab bar is enough.
 
           It is set in Inter, not the display face. It sits a thumb-width under
           "Block dates", and while it wore Fraunces the two of them were the same
           rectangle in two typefaces — which reads as a pair of equals rather
           than a rank. One face for the things you tap, and the rank carried
-          where it belongs: this one is a filled or outlined row, blocking dates
-          is a quiet line of housekeeping with no box around it at all. */}
-      <Link
-        href="/app/share"
-        className={
-          cards.length === 0
-            ? "flex min-h-14 items-center justify-between gap-3 rounded-xl bg-primary px-4 py-3 text-base font-medium text-primary-foreground"
-            : "flex min-h-14 items-center justify-between gap-3 rounded-xl border border-foreground/25 px-4 py-3 text-base font-medium"
-        }
-      >
-        <span>Share the house</span>
-        <ArrowRightIcon className="size-5 shrink-0" aria-hidden="true" />
-      </Link>
+          where it belongs: this one is a filled row, blocking dates is a quiet
+          line of housekeeping with no box around it at all. */}
+      {cards.length === 0 ? (
+        <Link
+          href="/app/share"
+          className="flex min-h-14 items-center justify-between gap-3 rounded-xl bg-primary px-4 py-3 text-base font-medium text-primary-foreground"
+        >
+          <span>Share the house</span>
+          <ArrowRightIcon className="size-5 shrink-0" aria-hidden="true" />
+        </Link>
+      ) : null}
     </div>
   );
 }

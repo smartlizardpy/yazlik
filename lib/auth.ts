@@ -57,12 +57,35 @@ export const auth = betterAuth({
    * after this. Google returns a refresh token only when the request is offline
    * *and* the grant is new — a returning user who has already consented gets an
    * access token and silence. `prompt: "consent"` is what forces the second ask
-   * when the calendar scope is added to an account that already granted
+   * when the calendar scopes are added to an account that already granted
    * identity; without it that upgrade succeeds, stores no refresh token, and
    * sync dies at the first hour boundary with nothing in the logs to explain it.
    *
    * The cost is that Google shows its consent screen on every sign-in rather
    * than remembering. For two lines it is the right trade.
+   *
+   * ### `prompt: "consent"` is also the only way to *widen* a grant
+   *
+   * A scope is never granted retroactively. When this app started needing three
+   * calendar scopes instead of one, every owner who had already consented kept
+   * handing back the old, short grant — nothing looked broken, the tokens
+   * refreshed fine, and the calendar simply could not be read. The fix is to send
+   * them through consent again, which `prompt: "consent"` is what makes possible:
+   * without it Google recognises the returning user, re-issues what it already
+   * holds, and the second ask is a silent no-op.
+   *
+   * better-auth's Google provider sends `include_granted_scopes: "true"` of its
+   * own accord, so the re-consent is additive — the widened grant carries the
+   * identity scopes forward rather than replacing them — and its OAuth callback
+   * writes the new `scope` back onto the existing `account` row instead of
+   * refusing an already-linked provider. Both were read out of
+   * `@better-auth/core@1.6.25` (`social-providers/google.ts`) and
+   * `better-auth@1.6.25` (`api/routes/callback.mjs`), because "it re-links
+   * cleanly" is the kind of assumption that is only wrong in production.
+   *
+   * `app/_actions/google.ts` decides *when* to ask, by comparing the stored
+   * `account.scope` against `GOOGLE_CALENDAR_SCOPES`; the button lives in
+   * `app/app/settings/google-section.tsx`.
    *
    * Option names checked against `@better-auth/core@1.6.25`'s `GoogleOptions`
    * (`social-providers/google.ts`), which passes `options.accessType` and

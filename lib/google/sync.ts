@@ -66,7 +66,7 @@
  * Google has never been called from this repository.
  */
 
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull } from "drizzle-orm";
 import type { calendar_v3 } from "googleapis";
 
 import { db } from "@/db";
@@ -76,6 +76,7 @@ import { addDaysStr, isDateStr, nightsBetween, toStr, type DateStr } from "@/lib
 import { googleClient, toGoogleCalendarError } from "@/lib/google/client";
 import { googleCredentials, isGoogleConfigured } from "@/lib/google/config";
 import {
+  GOOGLE_CALENDAR_SCOPES,
   GoogleCalendarError,
   isGoogleCalendarError,
   type CalendarClient,
@@ -90,85 +91,34 @@ import { newToken } from "@/lib/ids";
    ============================================================ */
 
 /**
- * See the list of calendars the owner keeps — **and nothing in them**.
+ * The scopes and the grant check live in `lib/google/types.ts`, not here.
  *
- * This is the scope the two-way requirement forces. `calendar.app.created`, the
- * single narrow scope `lib/google/types.ts` was written around, grants access
- * only to calendars this app itself created — which means the app can never see
- * the calendar the owner has been keeping their summer in. The owner asked for
- * exactly that calendar. So the list has to be readable.
+ * They were briefly defined in both files, which is how the bug this comment
+ * replaces got in: the settings screen imported the *narrow* list from `types.ts`
+ * and asked Google for that, while the `hasCalendarScope` defined here tested
+ * against the *wide* list. The owner consented, Google granted what was asked
+ * for, and the check said no. Nothing was retryable and nothing was wrong.
  *
- * `.readonly` is the important half: this permits reading the *index* of
- * calendars, not creating, renaming, unsubscribing, or hiding any of them.
+ * `types.ts` wins because it is the only one of the two a **client component**
+ * can import — it pulls in no database, no `googleapis`, no better-auth — and
+ * the button that asks for consent is a client component. Re-exported here so
+ * that server code reading this file finds them where it expects to.
+ *
+ * @see lib/google/types.ts for what each scope grants and why it is the
+ * narrowest that covers its call.
  */
-export const CALENDAR_LIST_SCOPE =
-  "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
-
-/**
- * Read and write events on calendars the owner **owns**.
- *
- * The narrowest scope that covers `events.list`, `events.insert`, `events.patch`
- * and `events.delete` on a calendar the app did not create. The alternative,
- * `calendar.events`, additionally reaches every calendar merely *shared* with
- * them — a partner's calendar, a work calendar somebody added them to — which
- * this app has no business seeing. `.owned` stops at their own.
- */
-export const CALENDAR_EVENTS_OWNED_SCOPE =
-  "https://www.googleapis.com/auth/calendar.events.owned";
-
-/**
- * Make a fresh secondary calendar, and manage events on it.
- *
- * Kept from the original design for the owner who does *not* want the house
- * mixed into a calendar they already keep. It grants `calendars.insert` plus
- * full event access to calendars this app created — and to nothing else.
- * Choosing it over `calendar.calendars` matters: that one would let the app
- * rename or delete any calendar the owner has.
- */
-export const CALENDAR_APP_CREATED_SCOPE =
-  "https://www.googleapis.com/auth/calendar.app.created";
-
-/**
- * What the consent screen asks for, and therefore what it says out loud:
- *
- * 1. *"See the list of Google calendars you're subscribed to"*
- * 2. *"See, create, change, and delete events on Google calendars you own"*
- * 3. *"Make secondary Google calendars, and see, create, change, and delete
- *    events on them"*
- *
- * Every entry was checked against the discovery document vendored in
- * `googleapis@173.0.0` rather than recalled, per operation:
- * `calendarList.list` accepts (1); `events.list/insert/patch/delete` accept (2)
- * and (3); `calendars.insert` accepts (3).
- *
- * **This is a wider ask than the identity scopes better-auth requests at
- * sign-in, and it is deliberately a separate consent** — asked from Settings by
- * an owner who has already decided they want the calendar, and never asked at
- * all of one who hasn't. See `lib/auth.ts`, which registers Google with the
- * default `openid email profile` and nothing more.
- */
-export const CALENDAR_SYNC_SCOPES: readonly string[] = [
-  CALENDAR_LIST_SCOPE,
-  CALENDAR_EVENTS_OWNED_SCOPE,
+export {
   CALENDAR_APP_CREATED_SCOPE,
-];
+  CALENDAR_EVENTS_OWNED_SCOPE,
+  CALENDAR_FULL_SCOPE,
+  CALENDAR_LIST_SCOPE,
+  hasCalendarScope,
+  hasPartialCalendarScope,
+  missingCalendarScopes,
+} from "@/lib/google/types";
 
-/** The legacy everything-scope. Nothing here asks for it; a grant carrying it works. */
-const CALENDAR_FULL_SCOPE = "https://www.googleapis.com/auth/calendar";
-
-/**
- * Has this account actually granted what the sync needs?
- *
- * better-auth stores the granted scopes on `account.scope` as one string. Google
- * separates with spaces; better-auth has been seen to join with commas. Split on
- * both rather than guess.
- */
-export function hasCalendarScope(granted: string | null | undefined): boolean {
-  if (!granted) return false;
-  const held = new Set(granted.split(/[\s,]+/).filter(Boolean));
-  if (held.has(CALENDAR_FULL_SCOPE)) return true;
-  return CALENDAR_SYNC_SCOPES.every((scope) => held.has(scope));
-}
+/** What the second consent asks for. `GOOGLE_CALENDAR_SCOPES`, under this file's name for it. */
+export const CALENDAR_SYNC_SCOPES: readonly string[] = GOOGLE_CALENDAR_SCOPES;
 
 /* ============================================================
    THE TWO CALLS `client.ts` DOES NOT HAVE
@@ -286,10 +236,15 @@ export function realSyncClient(tokens: GoogleTokens): SyncCalendarClient {
         const api = await calendarApi(tokens, "listCalendars");
         const response = await api.calendarList.list({
           maxResults: 250,
-          // Only calendars the owner can actually write to. A read-only
-          // subscription (a national-holidays feed) is not somewhere a stay can
-          // be written, so offering it would be offering a dead end.
-          minAccessRole: "writer",
+          // Only calendars the owner **owns**, because that is exactly the set
+          // the grant can write to: `calendar.events.owned` is "events on
+          // calendars you own", and it stops there. `writer` would be the wider
+          // and wrong answer — it also returns calendars merely shared with them
+          // at write level, every one of which would be offered in the picker
+          // and then 403 on the first stay. Offering a dead end is worse than
+          // offering nothing. A read-only subscription (a holidays feed) is
+          // excluded by the same filter, for the same reason.
+          minAccessRole: "owner",
           showHidden: false,
         });
 
@@ -713,6 +668,48 @@ export async function setHouseCalendar(
     .update(bookings)
     .set({ googleEventId: null, googleSync: "none" })
     .where(eq(bookings.houseId, houseId));
+}
+
+/** How the house's stays have fared on the way to Google. Both numbers, one query. */
+export type SyncCounts = {
+  /** Stays that reached the calendar. */
+  synced: number;
+  /** Stays that were said yes to and did not. `retryFailedSyncs` comes back for these. */
+  failed: number;
+};
+
+/**
+ * What the settings screen can honestly say about a connected house.
+ *
+ * There is no `lastSyncedAt` column anywhere in this schema, so the screen
+ * cannot say when anything last went out and no longer pretends to. What it can
+ * say is how many stays are on the calendar and how many are not, both of which
+ * are one `GROUP BY` over a column that already exists.
+ *
+ * Total, like everything else in this file: a database that will not answer
+ * returns zeroes and a log line rather than taking the settings page down with
+ * it. Two zeroes read as "nothing has gone out yet", which is the least wrong
+ * thing to say when we genuinely do not know.
+ */
+export async function syncCounts(houseId: string): Promise<SyncCounts> {
+  try {
+    const rows = await db
+      .select({ status: bookings.googleSync, n: count() })
+      .from(bookings)
+      .where(eq(bookings.houseId, houseId))
+      .groupBy(bookings.googleSync);
+
+    let synced = 0;
+    let failed = 0;
+    for (const row of rows) {
+      if (row.status === "synced") synced = Number(row.n) || 0;
+      else if (row.status === "failed") failed = Number(row.n) || 0;
+    }
+    return { synced, failed };
+  } catch (error) {
+    console.error("[sync] could not count what has gone out", error);
+    return { synced: 0, failed: 0 };
+  }
 }
 
 /* ============================================================

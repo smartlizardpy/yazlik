@@ -141,11 +141,16 @@ import { bookings, houses, type Booking, type House } from "@/db/schema";
 import { addDaysStr } from "@/lib/dates";
 import { fakeClient, type FakeCalendarClient } from "@/lib/google/fake";
 import {
+  CALENDAR_APP_CREATED_SCOPE,
+  CALENDAR_EVENTS_OWNED_SCOPE,
+  CALENDAR_LIST_SCOPE,
   CALENDAR_SYNC_SCOPES,
   allDayRange,
   connectionFor,
   hasCalendarScope,
+  hasPartialCalendarScope,
   isConnected,
+  missingCalendarScopes,
   pullBlocks,
   retryFailedSyncs,
   setHouseCalendar,
@@ -156,7 +161,11 @@ import {
   type SyncCalendarClient,
   type SyncDeps,
 } from "@/lib/google/sync";
-import { GoogleCalendarError, type GoogleTokens } from "@/lib/google/types";
+import {
+  GOOGLE_CALENDAR_SCOPES,
+  GoogleCalendarError,
+  type GoogleTokens,
+} from "@/lib/google/types";
 
 /* ============================================================
    READING WHAT WAS WRITTEN
@@ -497,6 +506,89 @@ describe("the calendar grant", () => {
     expect(hasCalendarScope(null)).toBe(false);
     expect(hasCalendarScope(undefined)).toBe(false);
     expect(hasCalendarScope("")).toBe(false);
+  });
+
+  /**
+   * The defect this file's scope tests could not see, because they only ever
+   * asked one of the two lists.
+   *
+   * `lib/google/types.ts` held a *narrow* scope list and the settings screen
+   * imported that one to ask Google with. This file held a *wide* one and tested
+   * the answer against it. The owner consented, Google granted precisely what it
+   * was asked for, and the check said no — for ever, with no retry that could
+   * help and nothing on screen but "not connected".
+   *
+   * There is one list now and this is the assertion that keeps it one. A second
+   * copy anywhere fails here before it can reach an owner.
+   */
+  it("is the same list the consent button asks Google for", () => {
+    expect(CALENDAR_SYNC_SCOPES).toEqual(GOOGLE_CALENDAR_SCOPES);
+    expect(hasCalendarScope(GOOGLE_CALENDAR_SCOPES.join(" "))).toBe(true);
+  });
+
+  it("names the three scopes Google actually publishes", () => {
+    // Verbatim from the Calendar v3 discovery document. A typo in any one of
+    // these is invisible until an owner is standing in front of Google's screen.
+    expect(CALENDAR_LIST_SCOPE).toBe(
+      "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    );
+    expect(CALENDAR_EVENTS_OWNED_SCOPE).toBe(
+      "https://www.googleapis.com/auth/calendar.events.owned",
+    );
+    expect(CALENDAR_APP_CREATED_SCOPE).toBe(
+      "https://www.googleapis.com/auth/calendar.app.created",
+    );
+  });
+});
+
+/* ============================================================
+   THE GRANT THAT IS REAL AND STILL TOO SMALL
+   ============================================================ */
+
+describe("a grant that predates what the app now asks for", () => {
+  /**
+   * Copied out of the `account` row of the owner who reported this, comma-space
+   * separated exactly as better-auth wrote it.
+   */
+  const OLD_GRANT =
+    "https://www.googleapis.com/auth/userinfo.email, " +
+    "https://www.googleapis.com/auth/userinfo.profile, " +
+    "https://www.googleapis.com/auth/calendar.app.created, openid";
+
+  it("is not enough, however real it looks", () => {
+    expect(hasCalendarScope(OLD_GRANT)).toBe(false);
+  });
+
+  it("says exactly which scopes are missing, so the fix is a copy-paste", () => {
+    expect(missingCalendarScopes(OLD_GRANT)).toEqual([
+      CALENDAR_LIST_SCOPE,
+      CALENDAR_EVENTS_OWNED_SCOPE,
+    ]);
+  });
+
+  /**
+   * The distinction the settings screen renders. "You have never connected
+   * Google" and "the access you gave is narrower than this needs" are different
+   * problems behind the same button, and telling an owner the first when the
+   * second is true blames them for something they did correctly.
+   */
+  it("is a re-consent, not a first connect", () => {
+    expect(hasPartialCalendarScope(OLD_GRANT)).toBe(true);
+  });
+
+  it("is not a re-consent when nothing calendar-shaped was ever granted", () => {
+    expect(hasPartialCalendarScope("openid email profile")).toBe(false);
+    expect(hasPartialCalendarScope(null)).toBe(false);
+  });
+
+  it("is not a re-consent once the whole grant is held", () => {
+    expect(hasPartialCalendarScope(SCOPE)).toBe(false);
+    expect(missingCalendarScopes(SCOPE)).toEqual([]);
+  });
+
+  it("counts the legacy everything-scope as the whole grant", () => {
+    expect(missingCalendarScopes("https://www.googleapis.com/auth/calendar")).toEqual([]);
+    expect(hasPartialCalendarScope("https://www.googleapis.com/auth/calendar")).toBe(false);
   });
 });
 

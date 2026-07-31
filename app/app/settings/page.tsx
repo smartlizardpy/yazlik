@@ -1,12 +1,9 @@
 import type { Metadata } from "next";
-import { and, asc, eq, isNull } from "drizzle-orm";
-import { db } from "@/db";
-import { images } from "@/db/schema";
 import { isGoogleConfigured } from "@/lib/google/config";
 import { requireHouse } from "@/lib/session";
 import { GoogleSection } from "./google-section";
-import { PhotosSection } from "./photos-section";
 import { SettingsForm } from "./settings-form";
+import { SignOut } from "./sign-out";
 
 export const metadata: Metadata = {
   title: "Settings",
@@ -24,25 +21,18 @@ export const metadata: Metadata = {
  * the slug, the feed token, or the Google calendar id, and the feed token is
  * the private subscribe URL — it should not travel in a payload that does not
  * need it.
+ *
+ * ### Photos left, and sign out arrived
+ *
+ * The gallery is `/app/photos` now — its own tab, because adding a photograph
+ * of the house is one of the two things an owner most wants to do and it was
+ * buried here. Sign out came the other way: it was the third row of the
+ * hamburger, and when that went it needed a home. This is the screen that is
+ * about *your* end of the product rather than the guest's, so it ends here, at
+ * the foot of everything, where a phone app puts it.
  */
 export default async function SettingsPage() {
   const house = await requireHouse();
-
-  // Gallery photos only: both foreign keys null is the schema's way of saying
-  // "this hangs on the house itself" rather than on a place or a guide section.
-  // `createdAt` breaks a tie so two photos sharing a position never swap places
-  // between renders.
-  const photos = await db
-    .select({ id: images.id, url: images.url, alt: images.alt })
-    .from(images)
-    .where(
-      and(
-        eq(images.houseId, house.id),
-        isNull(images.placeId),
-        isNull(images.sectionId),
-      ),
-    )
-    .orderBy(asc(images.position), asc(images.createdAt));
 
   return (
     <section className="flex flex-1 flex-col gap-6 pt-8 pb-6">
@@ -50,28 +40,17 @@ export default async function SettingsPage() {
           named the panel rather than the screen — what is actually here is the
           house as everyone else meets it, and what you have already agreed to.
 
-          `pt-8`, not `pt-6`: the owner shell's header is sticky, opaque and
-          ruled, and the content underneath it scrolls right up to that hairline.
-          The extra 8px is the difference between a screen that starts and one
-          that looks cropped. Every section below carries `scroll-mt-20` for the
-          same reason — the 60px header must never be what a jumped-to field
-          lands behind. */}
+          `pt-8`, not `pt-6`: a screen that starts hard against the top of the
+          phone looks cropped. The `scroll-mt-20` on the sections below is left
+          in place: it costs nothing and it is still what keeps a jumped-to
+          field off the very edge of the viewport. */}
       <header className="flex scroll-mt-20 flex-col gap-2">
         <h1 className="text-2xl text-balance">How the house reads</h1>
         <p className="text-base text-muted-foreground">
-          The photos and words on your link, and what you will say yes to when
-          someone asks.
+          The words on your link, and what you will say yes to when someone
+          asks.
         </p>
       </header>
-
-      {/* Above the form, not inside it. The form ends in the sticky "Save
-          changes" bar, and a primary button with more of the screen after it
-          reads as belonging to whatever follows. Photos save on their own. */}
-      <PhotosSection
-        houseId={house.id}
-        houseName={house.name}
-        photos={photos}
-      />
 
       <SettingsForm
         house={{
@@ -110,6 +89,10 @@ export default async function SettingsPage() {
         configured={isGoogleConfigured()}
         houseName={house.name}
       />
+
+      {/* The last thing on the last screen, ruled off from the house so it
+          cannot be mistaken for one more thing about the house. */}
+      <SignOut />
     </section>
   );
 }

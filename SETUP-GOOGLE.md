@@ -64,8 +64,9 @@ The project can talk to nothing until you say which API it may use.
 3. Wait for the page to turn into the API's dashboard.
 
 Skipping this step does not fail at sign-in. It fails much later, the first time
-the app tries to make a calendar, with an error that says the Calendar API *"has
-not been used in project 123456789 before or it is disabled"*. Do it now.
+the app asks Google for your list of calendars, with an error that says the
+Calendar API *"has not been used in project 123456789 before or it is disabled"*.
+Do it now.
 
 ---
 
@@ -136,51 +137,99 @@ Left menu → **Data Access** → **Add or remove scopes**.
 
 A scope is one sentence of permission. The dialog offers a filtered list and a
 box at the bottom labelled **Manually add scopes** — the box is easier. Paste
-these, one per line, then **Add to table** and **Update**, then **Save**:
+these **six**, one per line, then **Add to table** and **Update**, then **Save**:
 
 ```
 openid
 https://www.googleapis.com/auth/userinfo.email
 https://www.googleapis.com/auth/userinfo.profile
+https://www.googleapis.com/auth/calendar.calendarlist.readonly
+https://www.googleapis.com/auth/calendar.events.owned
 https://www.googleapis.com/auth/calendar.app.created
 ```
 
+**Every one of these must be in the table.** A scope the app asks for and this
+screen does not declare is not refused — it is dropped, silently. The consent
+screen appears, you press Allow, the callback succeeds, and the grant simply
+lacks it. Nothing anywhere says why. If you skip one of the calendar three, that
+is exactly the failure you get, and the app's own diagnosis of it is in the
+server log — see [When it goes wrong](#when-it-goes-wrong), which prints the
+missing scope strings verbatim.
+
 The first three are how the app learns your name and email address at sign-in.
 They are non-sensitive, and they are all the sign-in button ever asks for. Google
-does not show a scary screen for those.
+does not show a warning screen for those.
 
-The fourth is the calendar one, and it is deliberately the narrowest scope Google
-publishes for this job. In Google's own words it lets an app *"make secondary
-Google calendars, and see, create, change, and delete events on them."* The
-important half is what it leaves out: it grants access **only to calendars this
-app itself created**. It cannot read your personal calendar, your work calendar,
-or anything you subscribe to. It is a room, not a key to the building. The
-constant lives at `CALENDAR_APP_CREATED_SCOPE` in `lib/google/types.ts`, and that
-file is the authority if this document and the code ever disagree.
+The last three are the calendar. They are asked for **separately**, later, from
+Settings, by someone who has already decided they want it — so an owner who never
+connects a calendar is never asked about one. In Google's own words:
 
-The calendar scope is **not** requested at sign-in. It is asked for separately,
-later, from Settings, by someone who has already decided they want it — so an
-owner who never connects a calendar is never asked about one.
+| Scope | What Google says on the consent screen | Why the app needs it |
+|---|---|---|
+| `calendar.calendarlist.readonly` | *"See the list of Google calendars you're subscribed to"* | To offer you a list to choose from. The names and ids only — it reads nothing inside any calendar. |
+| `calendar.events.owned` | *"See, create, change, and delete events on Google calendars you own"* | The actual work. Reads the weeks already promised out of the calendar you pick, and writes confirmed stays back into it. |
+| `calendar.app.created` | *"Make secondary Google calendars, and see, create, change, and delete events on them"* | Only for **Make a calendar called …** — the option for an owner who does not want the summer mixed into the calendar they live by. |
 
-### If you want to use a calendar you already keep
+Each is the narrowest scope Google publishes for the call that needs it. They
+were checked per operation against the live Calendar v3 discovery document, not
+from memory. The constants live in `lib/google/types.ts` as
+`GOOGLE_CALENDAR_SCOPES`, and **that file is the authority if this document and
+the code ever disagree.**
 
-`calendar.app.created` cannot see calendars it did not create. If Settings offers
-you the choice of pointing the house at a calendar that already exists — the
-family one, the one already shared with your cousins — that choice needs a wider
-scope than the one above:
+### Why not the one narrow scope this used to ask for
 
-```
-https://www.googleapis.com/auth/calendar
-```
+An earlier version of this app asked only for `calendar.app.created`, on the
+argument that it reaches **only calendars the app itself created** and therefore
+cannot see your personal calendar at all. That argument was true. The scope was
+still wrong, and the reason is the whole point of the feature:
 
-That one is read and write on **every** calendar the account can reach, which is a
-genuinely bigger thing to hand over, and Google classifies it as sensitive: you
-will see the unverified-app warning for it, and publishing the app to production
-one day would require verification.
+> *"Anything that may be in the calendar needs to be blocked… yk if they added
+> like other people before yk doing it."*
 
-If you are happy to let the app make its own calendar — which you can then share
-with anyone, from Google's own interface — leave it out and take the narrow scope.
-That is the recommended path and it is the one the code was written for.
+The weeks that matter were promised to people **before this app existed**, and
+they live in a calendar you already keep — one this app did not create and, under
+that scope, could never see. It was also a dead end on screen: on a fresh
+connect there are no app-created calendars, so the picker was empty, no calendar
+was ever stored, and Settings reported *not connected* for ever with no way
+forward.
+
+`calendar.events.owned` is what fixes that, and it is meaningfully narrower than
+the obvious alternatives:
+
+- `https://www.googleapis.com/auth/calendar` — read, write, **share and delete**
+  every calendar the account can reach. Not asked for.
+- `https://www.googleapis.com/auth/calendar.events` — events on *all* your
+  calendars, including ones merely **shared** with you: a partner's, a work one
+  somebody added you to. Not asked for.
+- `.../calendar.events.owned` — events on calendars **you own**, and nothing
+  else. This one.
+
+So: the app can see the *names* of your calendars, and read and write events on
+the ones you own. It only ever touches the single calendar you pick. It cannot
+reach a calendar somebody shared with you, cannot change any calendar's sharing
+or settings, and cannot delete a calendar.
+
+Google classifies `calendar.events.owned` as **sensitive**. In testing mode that
+costs you nothing beyond the unverified-app warning you already clicked through
+in step 4. Publishing to production one day would require verification — see
+[The seven-day thing](#the-seven-day-thing).
+
+### If you are upgrading an app that was already connected
+
+**A widened scope is never granted retroactively.** If anyone has already
+connected their calendar under the old single-scope build, Google will go on
+handing back that same old grant for ever — the account stays linked, the tokens
+keep refreshing, and the calendar silently cannot be read. Adding the scopes here
+is necessary and is **not sufficient**.
+
+Each owner has to consent again. The app detects this by itself: it compares the
+scopes stored on the `account` row against what it now needs, and Settings shows
+*"This needs more of your calendar than you gave it last time"* with an **Ask
+Google again** button. One press, one consent screen, and it is done — nothing
+they set up is lost and no database row has to be edited by hand.
+
+There is nothing for you to do here beyond adding the three strings above and
+telling them to open Settings.
 
 ---
 
@@ -301,7 +350,7 @@ redeploy, not just a change to the environment variables.
 
 ## 8. Check it worked
 
-Four checks, in order. Each one tells you something different, so do them in
+Five checks, in order. Each one tells you something different, so do them in
 order and stop at the first that fails.
 
 1. **The button exists.** Open <http://localhost:3100/sign-in>. There is now a
@@ -319,7 +368,20 @@ order and stop at the first that fails.
    calendar sync is not set up on this install; it offers a **Connect** button
    and explains what it will touch. Nothing has been connected yet.
 
-4. **The connect works.** Press **Connect**. This is the real test — see below.
+4. **The connect works.** Press **Connect Google Calendar**. This is the real
+   test — see below. You go to Google, read three calendar permissions, allow
+   them, and land back on Settings. It should now be asking **which** calendar
+   the house lives in, with your own calendars in a picker and **Make a calendar
+   called …** underneath.
+
+   If it instead still offers **Connect**, or says it needs more of your calendar
+   than you gave it, the grant came back short — go back to step 5 and check all
+   six scope strings are in the table.
+
+5. **A calendar is chosen.** Pick one, or make a new one. Either way Settings
+   should then read *"Stays are going to …"*. **This is the state that means it
+   worked.** Until a calendar is chosen nothing syncs, and until this line appears
+   the house is not connected in any sense that matters.
 
 If you get sent back to `/sign-in` with a sentence about Google not finishing,
 that is the app catching a failed round trip and telling you in words. The
@@ -351,12 +413,28 @@ The token expired on schedule.
 **The fix**, and it takes one click: **Google Auth Platform** → **Audience** →
 **Publish app**.
 
-- If the app only uses the narrow `calendar.app.created` scope, this should go
-  through immediately.
-- If you added the wide `.../auth/calendar` scope, the console will tell you
-  verification is required. For a private family house that is a real cost, and it
-  is the strongest argument for staying on the narrow scope and letting the app
-  make its own calendar.
+Publishing an app that requests a **sensitive** scope — and
+`calendar.events.owned` is one — puts you in front of Google's verification
+review: a demo video, a privacy policy on a domain you control, and a wait
+measured in weeks. That is a real cost for one family's summer house, and it is
+worth knowing about **before** you rely on this rather than a week after.
+
+The three ways out, in the order most people should consider them:
+
+1. **Keep the app in Testing and reconnect every seven days.** One press of
+   **Ask Google again** in Settings. Ugly, free, and completely reliable if
+   somebody remembers.
+2. **Use an Internal app instead**, if the Google account is on a Workspace
+   domain you control. Audience → **Internal** exempts you from verification
+   entirely. It is not available on a personal `@gmail.com` account.
+3. **Go through verification.** The right answer if this is going to run for
+   years, and the wrong one to start with.
+
+Note that dropping back to `calendar.app.created` alone is *not* on that list any
+more. It was the old advice and it does not survive the requirement: a calendar
+the app did not create cannot be read on that scope, and reading the weeks
+already promised in a calendar you already keep is the entire point. See
+[Why not the one narrow scope this used to ask for](#why-not-the-one-narrow-scope-this-used-to-ask-for).
 
 Do this before you rely on it, not after somebody's August disappears from the
 calendar.
@@ -367,23 +445,50 @@ calendar.
 
 Worth saying plainly, because it changes what you should be watching for.
 
-Everything under `lib/google/` — the client, the error mapping, the scope
-constant, the event bodies — was written and unit-tested against a fake
-(`lib/google/fake.ts`) while there were no credentials on this machine to run it
-with. Every call signature was checked against the discovery document vendored in
-`googleapis`, and every failure path was exercised with hand-written fixtures
-shaped like Google's. But no line of it has ever made a real request. The tests
-pass and prove only that the code does what its author believed Google does.
+Everything under `lib/google/` — the client, the error mapping, the scopes, the
+event bodies — was written and unit-tested against a fake (`lib/google/fake.ts`)
+while there were no credentials on this machine to run it with. Every failure
+path was exercised with hand-written fixtures shaped like Google's. But no line
+of it has ever made a real request. The tests pass and prove only that the code
+does what its author believed Google does.
+
+Two things *were* checked against Google rather than against belief, because
+getting them wrong is only discovered while an owner is standing in front of the
+consent screen: the six scope strings, and which of them each API call accepts.
+Both came from the **live** Calendar v3 discovery document
+(<https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest>) and Google's
+published auth guide. `calendarList.list` accepts
+`calendar.calendarlist.readonly`; `events.list`, `events.insert`, `events.patch`
+and `events.delete` all accept `calendar.events.owned`; `calendars.insert`
+accepts `calendar.app.created`. Nothing the app calls needs a scope it does not
+ask for, and nothing it asks for goes unused.
 
 So the first live connect is the test. Here is what to watch, in the order you
 will meet it.
 
 ### 1. The consent screen itself
 
-Read what it actually says before you click Allow. It should name one calendar
-permission and describe it as making and managing calendars the app creates. If
-it says something about seeing and editing **all** your calendars, the app asked
-for a wider scope than intended — stop, and check step 5.
+Read what it actually says before you click Allow. It should list **three**
+calendar permissions, worded close to:
+
+- *See the list of Google calendars you're subscribed to*
+- *See, create, change, and delete events on Google calendars you own*
+- *Make secondary Google calendars, and see, create, change, and delete events on
+  them*
+
+Two things to check, and they fail in opposite directions:
+
+- **Fewer than three.** A scope you did not declare in step 5 is dropped
+  silently. Google will not mention it. Go back and add the missing string, then
+  connect again — Settings will tell you it needs more than you gave it.
+- **Something about seeing and editing *all* your calendars**, or sharing or
+  deleting them. That is `.../auth/calendar`, which this app does not ask for.
+  Stop, and check step 5 — something is requesting a wider scope than intended.
+
+Note that Google collapses these into friendlier groupings on some screens, so
+the wording may not match line for line. What must be true is that it mentions
+your calendar **list** and events on calendars **you own**, and does not claim
+access to every calendar you can reach.
 
 ### 2. Whether a refresh token arrived
 
@@ -405,12 +510,18 @@ it on a shared screen.)
 
 ### 3. Whether the Calendar API is actually on
 
-The very first thing a connect does is ask Google to make a calendar. If step 2
-was skipped, Google answers 403 with `accessNotConfigured`, and — this is the
-trap — the app classifies 403 as an authentication failure and will tell you to
-reconnect. Reconnecting cannot fix it. If a fresh connect fails immediately and
-the server log mentions `accessNotConfigured` or `SERVICE_DISABLED`, go and
-enable the Calendar API.
+The very first thing a connect does is ask Google for the list of your calendars.
+If step 2 was skipped, Google answers 403 with `accessNotConfigured`, and — this
+is the trap — the app classifies 403 as an authentication failure and will tell
+you to reconnect. Reconnecting cannot fix it. If a fresh connect fails
+immediately and the server log mentions `accessNotConfigured` or
+`SERVICE_DISABLED`, go and enable the Calendar API.
+
+You will see this as a **Google is busy / did not answer properly** line beside
+the picker rather than as a broken screen: the app deliberately keeps **Make a
+calendar called …** on offer even when the list fails, because that offer can
+still work. It will not work in this particular case, since the same disabled API
+blocks it — but the failure is named in the server log either way.
 
 ### 4. The dates, on the very first stay
 
@@ -457,7 +568,10 @@ retry a dead token on every pass forever and never tell you to reconnect.
 | `invalid_client` | Wrong client secret, or whitespace around it | Re-copy from the console. Restart the server |
 | `invalid_grant`, and it used to work | The refresh token died — usually [the seven-day thing](#the-seven-day-thing), sometimes a revoked grant | Publish the app. Then disconnect and connect again |
 | "Google Calendar API has not been used in project … before or it is disabled" | Step 2 | Enable the Calendar API. It can take a couple of minutes to take effect |
-| `Request had insufficient authentication scopes` | The calendar permission was not actually granted, or was granted before you added the scope | Disconnect in Settings, then connect again and read the consent screen |
+| `Request had insufficient authentication scopes` | The calendar permission was not actually granted, or was granted before you added the scope | Open Settings and press **Ask Google again**. Read the consent screen this time |
+| Settings says *"This needs more of your calendar than you gave it last time"* | Working as designed. The stored grant predates the scopes the app now asks for | Press **Ask Google again**. Nothing is lost and no database row needs editing |
+| That message again, immediately after consenting | The scope is missing from **Data Access** in the console, so Google dropped it silently | The server log prints `[google] the stored grant is missing scopes:` followed by the exact strings. Paste them into step 5 |
+| Settings sits on *"Pick the calendar the house should live on"* with an empty list | Google answered and you own no calendar it can use — rare, but not an error | Press **Make a calendar called …**. That path needs no list |
 | No Google button at all on `/sign-in` | The app cannot see the credentials | Trailing whitespace, unsaved file, or a server that was not restarted |
 
 ### Starting over
@@ -476,7 +590,16 @@ make a new one and repeat step 7.
 
 Worth having written down somewhere, for the next time somebody asks.
 
-- It never reads your personal calendar, on the narrow scope. It cannot.
+- It never reads a calendar other than the one you picked. The grant it holds
+  could read any calendar you own — that is the honest version, and it is the
+  price of reading the weeks you promised people before this app existed — but
+  the code only ever names one calendar id, the one on your house.
+- It never touches a calendar somebody **shared** with you. It cannot: the scope
+  is `calendar.events.owned`, and the picker asks Google for calendars you own.
+- It never renames, re-shares or deletes a calendar. No scope it holds allows it.
+- It never deletes anything from Google when you press **Disconnect**. The events
+  describe real weeks; the app forgets the calendar and leaves it exactly as it
+  is.
 - It never emails your guests from Google. Every calendar write is made with
   notifications switched off, on purpose — the guest's invitation is the `.ics`
   file on their confirmation email, and that stays the only one.

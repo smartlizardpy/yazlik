@@ -733,9 +733,16 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
           `bg-background/90 backdrop-blur`: a translucent bar that is always
           there leaves the last line of the form legible *through* the button,
           which reads as a rendering fault rather than as depth. Kept mounted
-          while a save is in flight, and while an error from it is unread. */}
+          while a save is in flight, and while an error from it is unread.
+
+          It comes to rest *on top of* the tab bar, not underneath it:
+          `--owner-tabs` is the height that bar occupies including the phone's
+          home indicator, and it is declared once on the owner layout. The
+          safe-area padding this bar used to carry has gone with it — the tab
+          bar is what clears the home indicator now, and paying for it twice
+          left a fat empty shelf between the button and the tabs. */}
       {changed || pending || formError ? (
-        <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-border bg-background px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="sticky bottom-[var(--owner-tabs)] -mx-4 flex flex-col gap-2 border-t border-border bg-background px-4 py-3">
           {formError ? (
             <p role="alert" className="text-xs text-destructive">
               {formError}

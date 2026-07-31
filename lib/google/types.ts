@@ -1,10 +1,12 @@
 /**
  * The contract between this app and Google Calendar — and nothing else.
  *
- * This file names the four operations the product actually performs, the shape
- * of the one kind of event it writes, and the four ways a Google call can fail.
- * It imports nothing from `googleapis`, so it costs nothing to load and can be
- * read by code that will never talk to Google at all.
+ * This file names the four **write** operations the product performs, the shape
+ * of the one kind of event it writes, the scopes the owner consents to, and the
+ * four ways a Google call can fail. It imports nothing from `googleapis` and
+ * nothing from the database, so it costs nothing to load, and a **client
+ * component can import the scopes from here** — which is the whole reason they
+ * live in this file rather than beside the sync code that uses them.
  *
  * Two implementations satisfy {@link CalendarClient}:
  *
@@ -13,12 +15,16 @@
  *   the failures. Every test uses the fake; the real client is never called
  *   from a test, and as of this phase has never been run against live Google.
  *
- * ### Why the surface is this small
+ * ### The surface is not this small any more
  *
- * The plan is one-way sync: confirmed stay in, event out. The app never reads
- * the owner's calendar, never lists events, never watches for changes. Anything
- * beyond create / insert / patch / delete would be surface that has to keep
- * working without ever being used, so it is not here.
+ * This file once said "the plan is one-way sync: confirmed stay in, event out;
+ * the app never reads the owner's calendar". That is no longer true and the
+ * sentence has been deleted rather than softened. The owner asked for the
+ * opposite — *"Anything that may be in the calendar needs to be blocked… yk if
+ * they added like other people before"* — so the app also **lists** the owner's
+ * calendars and **reads** events from the one they choose. Those two reads live
+ * on `SyncCalendarClient` in `lib/google/sync.ts`, which extends the interface
+ * below; the scopes here cover all six calls.
  */
 
 import type { DateStr } from "@/lib/dates";
@@ -28,46 +34,166 @@ import type { DateStr } from "@/lib/dates";
    ============================================================ */
 
 /**
- * The only OAuth scope this app asks for.
+ * ## What the owner is actually consenting to, and why it grew
  *
- * Google's words for it: *"Make secondary Google calendars, and see, create,
- * change, and delete events on them."* The important half is what it leaves
- * out — it grants access **only to calendars this app itself created**. It
- * cannot read, edit, or even see the owner's personal calendar, their work
- * calendar, or anything they subscribe to. The owner is handing over a room,
- * not a key to the building.
+ * This file used to ask for one scope, `calendar.app.created`, and argued for it
+ * on privacy grounds: it reaches **only calendars this app itself created**, so
+ * the owner was "handing over a room, not a key to the building". The argument
+ * was sound and the scope was wrong, because of the sentence it buried at the
+ * end — *a calendar the owner makes by hand and points us at will not work*.
  *
- * The obvious alternatives are all wider than the job:
+ * That is not a footnote. It is the feature. The owner's requirement, verbatim:
  *
- * - `.../auth/calendar` — every calendar the owner can access, read and write.
- * - `.../auth/calendar.events` — events on *all* their calendars.
- * - `.../auth/calendar.calendars` + `.../auth/calendar.events` — two scopes to
- *   do what this one does, and the second still reaches everything.
+ * > *"Anything that may be in the calendar needs to be blocked. not hourly stuff
+ * > like that. yk if they added like other people before yk doing it."*
  *
- * Verified twice before this was written, because a scope that turns out not to
- * cover an operation is discovered at the worst possible moment — during the
- * owner's first consent:
+ * The weeks they mean were promised to cousins over WhatsApp two summers ago and
+ * live in the calendar they already keep — a calendar this app did not create and
+ * under `calendar.app.created` can never see. Worse, that scope made the connect
+ * screen a dead end: on first connect there are no app-created calendars, so the
+ * picker had nothing in it, no calendar id was ever stored, and Settings reported
+ * "not connected" forever with no way forward.
  *
- * 1. The discovery document vendored in `googleapis@173.0.0` lists this scope
- *    as accepted by `calendars.insert`, `events.insert`, `events.patch` and
- *    `events.delete` — all four calls this app makes, and no others are needed.
- * 2. Google's live Calendar auth guide describes it exactly as quoted above.
+ * So the ask is wider now, and the honest description of it is:
  *
- * So there is no fallback to `calendar.events` plus `calendar`, and the owner
- * consents to one line on the screen instead of "see, edit, share and
- * permanently delete all the calendars you can access".
+ * **The owner is letting this app see the *names* of every calendar they keep,
+ * and read, write and delete events on the calendars they *own*.** Not one room.
+ * It cannot see a colleague's calendar or a partner's calendar shared with them,
+ * it cannot change any calendar's sharing or settings, and it cannot delete a
+ * calendar — but within their own calendars it can read everything, and reading
+ * everything is the point: a week it cannot see is a week it will double-book.
  *
- * One consequence worth knowing before the consent screen is designed: because
- * the grant is scoped to calendars *this app created*, a calendar the owner
- * makes by hand and points us at will not work. The app has to create it. That
- * is why `houses.googleCalendarId` is written by us on first connect and is
- * never an input field.
+ * Each of the three is the narrowest scope Google publishes for the call that
+ * needs it. Checked per operation against the **live** Calendar v3 discovery
+ * document (`https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest`) and
+ * Google's auth guide, not from memory, because a scope that turns out not to
+ * cover an operation is discovered at the worst possible moment — mid-consent.
+ */
+
+/**
+ * *"See the list of Google calendars you're subscribed to."*
+ *
+ * The index only — names and ids, nothing inside any of them. Needed for
+ * `calendarList.list`, which is how the owner is offered a choice at all.
+ *
+ * `calendarList.list` accepts exactly four scopes: this one, `calendar.calendarlist`
+ * (which also lets the app **add and remove** subscriptions), `calendar.readonly`
+ * and `calendar` (both of which read every calendar's contents). This is the
+ * smallest of the four.
+ */
+export const CALENDAR_LIST_SCOPE =
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
+
+/**
+ * *"See, create, change, and delete events on Google calendars you own."*
+ *
+ * The working scope. It covers `events.list` — the pull that finds the weeks
+ * already promised — and `events.insert`, `events.patch`, `events.delete`, which
+ * put confirmed stays out.
+ *
+ * `.owned` is doing real work in that name. The alternative Google offers is
+ * `calendar.events`, *"view and edit events on all your calendars"*, which
+ * additionally reaches every calendar merely **shared** with the owner: a
+ * partner's, a work calendar somebody added them to. This app has no business in
+ * those. `.owned` stops at calendars the owner owns, which is also exactly the
+ * set they can pick from — see `listCalendars`, which asks Google for
+ * `minAccessRole: 'owner'` so the picker cannot offer a calendar the grant
+ * cannot write to.
+ */
+export const CALENDAR_EVENTS_OWNED_SCOPE =
+  "https://www.googleapis.com/auth/calendar.events.owned";
+
+/**
+ * *"Make secondary Google calendars, and see, create, change, and delete events
+ * on them."*
+ *
+ * Kept from the original design, for the owner who does **not** want the summer
+ * mixed into the calendar they live by. It is the only narrow scope that accepts
+ * `calendars.insert`; the alternative, `calendar.calendars`, would additionally
+ * let the app *"see and change the properties of Google calendars you have
+ * access to"* — renaming or retitling calendars it did not make.
+ *
+ * It is no longer the whole grant, and on its own it was never enough. It is the
+ * "make me a fresh one" half of the choice.
  */
 export const CALENDAR_APP_CREATED_SCOPE =
   "https://www.googleapis.com/auth/calendar.app.created";
 
-/** Everything the OAuth consent asks for. One entry, on purpose. */
-export const GOOGLE_CALENDAR_SCOPES: readonly string[] = [CALENDAR_APP_CREATED_SCOPE];
+/**
+ * Everything the second consent asks for, and therefore the three lines Google
+ * puts on the screen:
+ *
+ * 1. *"See the list of Google calendars you're subscribed to"*
+ * 2. *"See, create, change, and delete events on Google calendars you own"*
+ * 3. *"Make secondary Google calendars, and see, create, change, and delete
+ *    events on them"*
+ *
+ * **Each string must also be listed on the OAuth consent screen in the Google
+ * Cloud console.** A scope the app requests and the consent screen does not
+ * declare is silently dropped by Google — the owner consents, the callback
+ * succeeds, and the grant simply lacks it. `SETUP-GOOGLE.md` has the exact
+ * strings and where they go.
+ *
+ * Signing in asks for none of this: `lib/auth.ts` registers Google with the
+ * default `openid email profile` and stops. This is a **second, later** consent,
+ * asked from Settings by an owner who has already decided they want it.
+ */
+export const GOOGLE_CALENDAR_SCOPES: readonly string[] = [
+  CALENDAR_LIST_SCOPE,
+  CALENDAR_EVENTS_OWNED_SCOPE,
+  CALENDAR_APP_CREATED_SCOPE,
+];
+
+/**
+ * The legacy everything-scope. Nothing here ever asks for it, but an account
+ * that carries it — granted by some earlier build, or by another app — can do
+ * all six calls, so it counts as held.
+ */
+export const CALENDAR_FULL_SCOPE = "https://www.googleapis.com/auth/calendar";
+
+/**
+ * Which of {@link GOOGLE_CALENDAR_SCOPES} this account has **not** granted.
+ *
+ * The grant is stored by better-auth on `account.scope` as one string. Google
+ * separates with spaces, better-auth re-joins with commas, and a real row in
+ * this app's database has been seen holding `", "` — so split on both rather
+ * than pick a side.
+ *
+ * This is the check that catches the upgrade case, and it is the reason the
+ * check returns the *missing* scopes rather than a boolean. An owner who
+ * consented while the app asked for one scope holds a grant that is real,
+ * usable, and short — Google will keep handing that same old grant back for
+ * ever, because a widened scope is never granted retroactively. Something has to
+ * notice, and "some but not all" is what tells the settings screen to say *the
+ * permission you gave is narrower than what this now needs* instead of pretending
+ * nobody ever connected anything.
+ */
+export function missingCalendarScopes(granted: string | null | undefined): string[] {
+  if (!granted) return [...GOOGLE_CALENDAR_SCOPES];
+  const held = new Set(granted.split(/[\s,]+/).filter(Boolean));
+  if (held.has(CALENDAR_FULL_SCOPE)) return [];
+  return GOOGLE_CALENDAR_SCOPES.filter((scope) => !held.has(scope));
+}
+
+/** Has this account granted everything the sync needs? */
+export function hasCalendarScope(granted: string | null | undefined): boolean {
+  return missingCalendarScopes(granted).length === 0;
+}
+
+/**
+ * Did the owner grant *something* calendar-shaped, just not enough?
+ *
+ * True only for a partial grant — the old narrow consent, or a consent screen in
+ * the Google console that is missing one of the three strings. False both for an
+ * account that has never been asked (nothing to explain) and for one that holds
+ * the lot (nothing to fix). The settings screen shows a different sentence for
+ * each, because "you have not connected Google" and "the access you gave is
+ * narrower than this needs" are different problems with the same button.
+ */
+export function hasPartialCalendarScope(granted: string | null | undefined): boolean {
+  const missing = missingCalendarScopes(granted);
+  return missing.length > 0 && missing.length < GOOGLE_CALENDAR_SCOPES.length;
+}
 
 /* ============================================================
    TOKENS
@@ -146,7 +272,8 @@ export type CalendarEventPatch = Partial<CalendarEvent>;
    ============================================================ */
 
 /**
- * Four operations. The whole integration.
+ * The four writes. `SyncCalendarClient` in `lib/google/sync.ts` adds the two
+ * reads — `listCalendars` and `listEvents` — that two-way sync needs.
  *
  * Every method rejects with a {@link GoogleCalendarError} and nothing else —
  * both implementations funnel their failures through one mapper, so a caller
@@ -154,10 +281,13 @@ export type CalendarEventPatch = Partial<CalendarEvent>;
  */
 export interface CalendarClient {
   /**
-   * Make the house its own secondary calendar and return its id.
+   * Make the house a secondary calendar of its own and return its id.
    *
-   * Called exactly once per house, on first connect. The id is stored on
-   * `houses.googleCalendarId` and is the only calendar this app can ever touch.
+   * One of the two ways a house gets a calendar, and the one for an owner who
+   * does not want the summer mixed into the calendar they live by. The other is
+   * picking a calendar they already keep, which needs no call at all — the id
+   * comes straight off `listCalendars`. Either way the id lands on
+   * `houses.googleCalendarId`, and that is the only calendar this app touches.
    */
   createCalendar(summary: string): Promise<{ calendarId: string }>;
 

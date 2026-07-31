@@ -1,62 +1,69 @@
 "use client";
 
 /**
- * Google Calendar, on the owner's own screen, in three honest states.
+ * Google Calendar, on the owner's own screen, in the states it can really be in.
  *
- * The states are not decoration — they are three genuinely different situations
- * and each one has exactly one thing to say:
+ * Each one is a genuinely different situation with exactly one thing to say:
  *
  * 1. **Not set up on this install.** No `GOOGLE_CLIENT_ID`, no
  *    `GOOGLE_CLIENT_SECRET`, so there is no OAuth client for a Connect button to
- *    lead to. This is where every deployment starts and where this one is today.
- *    Two sentences: what is true, and who can change it. **No button.** A
- *    Connect button here would round-trip to a 400 and look like the app was
+ *    lead to. Two sentences: what is true, and who can change it. **No button.**
+ *    A Connect button here would round-trip to a 400 and look like the app was
  *    broken, when in fact nothing is wrong.
  *
  *    Nothing here names a file. The person holding this phone owns a house, not
  *    a checkout of this repository — there is no project folder on their side of
  *    the screen, and `SETUP-GOOGLE.md` is addressed to whoever deployed it. That
  *    pointer belongs in the README, which is where it is.
- * 2. **Set up, nothing connected.** A Connect button, and then the choice of
- *    which calendar. The part that has to be said out loud is what two-way
- *    actually means, because it is the thing that surprises people after the
- *    fact rather than before.
- * 3. **Connected.** Which calendar, when it last went out, how many stays did
- *    not make it, and the way out.
+ * 2. **Set up, never connected.** A Connect button, and a plain description of
+ *    what Google is about to ask for — worded to match what Google's own screen
+ *    will say, so that screen is a confirmation rather than a surprise.
+ * 3. **Connected, but the grant is short.** They gave calendar access once and
+ *    this app has since asked for more. The button is the same button; the
+ *    explanation must not be, because "you never connected Google" would be a
+ *    lie and would read as their mistake. See `reconsent` in
+ *    `app/_actions/google.ts`.
+ * 4. **Granted, no calendar chosen.** Pick one they already keep, or make a
+ *    fresh one. **Both must always be on offer**, including when the list comes
+ *    back empty and including when it fails to come back at all.
+ * 5. **Connected.** Which calendar, how the stays have fared, and the way out.
  *
  * ### Why this component fetches its own state
  *
  * `configured` arrives as a prop because only the server can answer it —
  * `process.env` in a client component describes the browser, not the
- * deployment — and because it decides the *first* paint. State 1 is today's
- * state and it must render immediately, with no flash of a spinner and no flash
- * of a Connect button that is about to disappear.
+ * deployment — and because it decides the *first* paint. State 1 must render
+ * immediately, with no flash of a spinner and no flash of a Connect button that
+ * is about to disappear.
  *
  * Everything else is asked for after mount, from the actions. The settings page
  * stays a plain server component with one sticky Save button and knows nothing
  * about Google; mounting this is one line and no plumbing.
  *
- * ### Probing rather than asking
+ * ### One authority, not two
  *
- * There is no "is the Google account linked" flag being read here. When no
- * calendar has been chosen, this asks `listCalendars()`: if a list comes back,
- * the grant exists and the choice is what is missing, so the picker is shown; if
- * it does not, there is no usable grant and Connect is the right thing on
- * screen. One round trip, in a state an owner passes through once, and it fails
- * for exactly the reason that makes the Connect button correct.
+ * This file used to decide between "connect" and "choose a calendar" by
+ * *probing*: call `listCalendars()` and see whether it worked. That is why an
+ * owner could be stuck. The probe conflated three different answers — no grant,
+ * a grant too narrow to list anything, and Google having a bad minute — into the
+ * single verdict "not connected", which put a Connect button in front of someone
+ * whose account was fine and whose press could not change anything.
  *
- * ### The shapes are read, not assumed
+ * `connectStatus()` is now the only authority. It reads the environment, the
+ * stored grant and the house, calls Google zero times, and cannot be wrong about
+ * which of the five states this is. `listCalendars()` is called in exactly one
+ * state — the one whose entire purpose is choosing — and **its failure downgrades
+ * the picker, never the state**: no list still means "make one", because that
+ * offer works whether or not the list arrived.
  *
- * `app/_actions/google.ts` was written alongside this file. The contract between
- * them is the five exported **names** — `connectStatus`, `listCalendars`,
- * `chooseCalendar`, `createCalendar`, `disconnect` — and the app-wide Server
- * Action result shape. The rest is read out of `unknown` by the small readers at
- * the top, the same way `lib/google/client.ts` reads a Google error it did not
- * write. It costs a dozen lines and it means a field named `lastSynced` instead
- * of `lastSyncedAt` degrades to "not yet" rather than to a build failure.
+ * ### The shapes are the real ones
  *
- * When both files are in front of one person, tighten `readConnection` and
- * `readCalendars` against the real types and delete the aliases.
+ * An earlier draft read these results out of `unknown` with hand-rolled key
+ * probes, against the day the two files disagreed. They disagreed immediately
+ * and it did not help: `connectStatus()` answers `{ ok, status }` and the reader
+ * looked for `calendarId` on the envelope, so `connected` was false for every
+ * owner who had ever connected anything. The types are imported now and the
+ * compiler checks the shape, which is the job those readers were failing at.
  */
 
 import { useCallback, useEffect, useId, useState, useTransition } from "react";
@@ -69,6 +76,7 @@ import {
   createCalendar,
   disconnect,
   listCalendars,
+  type ConnectStatus,
 } from "@/app/_actions/google";
 import { authClient } from "@/lib/auth-client";
 import { GOOGLE_CALENDAR_SCOPES } from "@/lib/google/types";
@@ -83,127 +91,35 @@ import {
 } from "@/components/ui/select";
 
 /* ============================================================
-   READING SHAPES THIS FILE DID NOT DEFINE
-   ============================================================ */
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-/** The first of `keys` that holds a non-blank string. */
-function readString(source: unknown, ...keys: string[]): string | null {
-  if (!isRecord(source)) return null;
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === "string" && value.trim() !== "") return value.trim();
-  }
-  return null;
-}
-
-/** The first of `keys` that holds a finite number. Absent counts as zero. */
-function readCount(source: unknown, ...keys: string[]): number {
-  if (!isRecord(source)) return 0;
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
-  }
-  return 0;
-}
-
-/** A `Date`, an ISO string, or milliseconds — whichever came back. */
-function readDate(source: unknown, ...keys: string[]): Date | null {
-  if (!isRecord(source)) return null;
-  for (const key of keys) {
-    const value = source[key];
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-    if (typeof value === "string" || typeof value === "number") {
-      const date = new Date(value);
-      if (!Number.isNaN(date.getTime())) return date;
-    }
-  }
-  return null;
-}
-
-/* ============================================================
    WHAT THE SCREEN NEEDS TO KNOW
    ============================================================ */
 
-type Connection = {
-  /** A calendar has been chosen and stays are going to it. */
-  connected: boolean;
-  /** What to call it on screen. Falls back to the id, which is at least true. */
-  calendarName: string | null;
-  lastSyncedAt: Date | null;
-  /** Stays that were said yes to and never reached the calendar. */
-  failedCount: number;
-};
-
 /**
- * The one rule: **connected means we can name the calendar.**
- *
- * Not "the Google account is linked" — that is a different fact and it is not
- * what state 3 renders. If the status says connected but names no calendar,
- * this falls through to the picker, which is recoverable; the reverse would
- * render a panel with a blank where the calendar's name goes.
- *
- * An explicit `connected: false` still wins, so a disconnect that leaves a stale
- * id behind does not keep the old panel on screen.
+ * One calendar on offer. Structurally the action's own row, declared here so
+ * this client component never reaches into `lib/google/sync.ts` — that module
+ * carries the database and `googleapis` behind it.
  */
-function readConnection(raw: unknown): Connection {
-  const calendarId = readString(raw, "calendarId", "googleCalendarId");
-  const calendarName =
-    readString(raw, "calendarName", "calendarSummary", "summary", "name") ?? calendarId;
+type CalendarChoice = { calendarId: string; name: string };
 
-  const stated = isRecord(raw) && typeof raw.connected === "boolean" ? raw.connected : null;
+/** Loading, then whichever state turned out to be true. */
+type View =
+  | { kind: "loading" }
+  /** Nothing to offer and nothing to press: no house yet, or a read that failed. */
+  | { kind: "unavailable"; message: string }
+  /** Never connected. */
+  | { kind: "connect" }
+  /** Connected once, with less than this now needs. `again` picks the wording. */
+  | { kind: "consent"; message: string; again: boolean }
+  /**
+   * Granted; the calendar is the only thing missing. `calendars` may be empty and
+   * `trouble` may be set — both still offer making a fresh one, which is the
+   * point.
+   */
+  | { kind: "choose"; calendars: CalendarChoice[]; trouble: string | null }
+  | { kind: "connected"; status: ConnectStatus };
 
-  return {
-    connected: stated === false ? false : calendarName !== null,
-    calendarName,
-    lastSyncedAt: readDate(raw, "lastSyncedAt", "lastSyncAt", "lastSynced", "syncedAt"),
-    failedCount: readCount(raw, "failedCount", "failedRows", "failed"),
-  };
-}
-
-type CalendarChoice = { id: string; name: string };
-
-/**
- * The calendars on offer, or `null` for "there is no usable grant".
- *
- * An **empty array is not null** and the difference is the whole point: it means
- * Google answered and had nothing to show, which is exactly what happens on the
- * narrow `calendar.app.created` scope before this app has made its first
- * calendar. That owner should be offered "make a new one", not "connect again".
- */
-function readCalendars(raw: unknown): CalendarChoice[] | null {
-  if (isRecord(raw) && raw.ok === false) return null;
-
-  const list = Array.isArray(raw)
-    ? raw
-    : isRecord(raw)
-      ? [raw.calendars, raw.items, raw.data].find(Array.isArray)
-      : undefined;
-
-  if (!Array.isArray(list)) return null;
-
-  const choices: CalendarChoice[] = [];
-  for (const entry of list) {
-    const id = readString(entry, "id", "calendarId");
-    if (!id) continue;
-    choices.push({ id, name: readString(entry, "name", "summary", "title") ?? id });
-  }
-  return choices;
-}
-
-/**
- * `{ ok: true } | { ok: false, error }`, the shape every action in this app
- * returns. An action that returns nothing at all counts as success — there is
- * no third answer, and a thrown error never gets here.
- */
-function readResult(raw: unknown, fallback: string): { ok: true } | { ok: false; error: string } {
-  if (raw === undefined || raw === null) return { ok: true };
-  if (isRecord(raw) && raw.ok === true) return { ok: true };
-  return { ok: false, error: readString(raw, "error", "message") ?? fallback };
-}
+/** When the server did not answer at all. Everything else says its own piece. */
+const TROUBLE = "We could not reach the server. Check your connection and try again.";
 
 /* ============================================================
    WORDS
@@ -213,38 +129,14 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-/**
- * When, in the way somebody actually asks it.
- *
- * Relative up to a day, then the date. Safe to compute in the browser because
- * this never renders on the server — the whole panel arrives after mount — so
- * there is no clock to disagree with.
- */
-function whenSynced(at: Date): string {
-  const minutes = Math.floor((Date.now() - at.getTime()) / 60_000);
-  if (minutes < 1) return "a moment ago";
-  if (minutes < 60) return `${plural(minutes, "minute", "minutes")} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${plural(hours, "hour", "hours")} ago`;
-  if (hours < 48) return "yesterday";
-  return at.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
-}
-
 /* ============================================================
    THE SECTION
    ============================================================ */
 
-/** Loading, then whichever of the three states turned out to be true. */
-type View =
-  | { kind: "loading" }
-  | { kind: "connect" }
-  | { kind: "choose"; calendars: CalendarChoice[] }
-  | { kind: "connected"; connection: Connection };
-
 export type GoogleSectionProps = {
   /**
    * `isGoogleConfigured()`, answered on the server. False on every deployment
-   * that has no OAuth client — which is the state this app is designed to sit in
+   * that has no OAuth client — which is a state this app is designed to sit in
    * indefinitely, not an error.
    */
   configured: boolean;
@@ -259,6 +151,8 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
 
   const [view, setView] = useState<View>({ kind: "loading" });
   const [chosen, setChosen] = useState<string>("");
+  /** The chosen calendar's own name, once it can be had. The id is the fallback. */
+  const [calendarName, setCalendarName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
   const [working, startWork] = useTransition();
@@ -276,17 +170,10 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
     void (async () => {
       let next: View;
       try {
-        const connection = readConnection(await connectStatus());
-        if (connection.connected) {
-          next = { kind: "connected", connection };
-        } else {
-          // The probe. A list means the grant is good and only the choice is
-          // missing; anything else means Connect is the honest thing to show.
-          const calendars = readCalendars(await listCalendars());
-          next = calendars ? { kind: "choose", calendars } : { kind: "connect" };
-        }
+        const result = await connectStatus();
+        next = result.ok ? await viewFor(result.status) : { kind: "unavailable", message: result.error };
       } catch {
-        next = { kind: "connect" };
+        next = { kind: "unavailable", message: TROUBLE };
       }
       if (alive) setView(next);
     })();
@@ -297,13 +184,49 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
   }, [configured, reloads]);
 
   /**
+   * The chosen calendar's name, asked for after the panel is already on screen.
+   *
+   * Nothing waits for this and nothing breaks without it: the panel renders the
+   * calendar id straight away, and the id is at least true. Worth one call
+   * because the id of a secondary calendar is a forty-character machine string,
+   * and "Stays are going to c_9f3…@group.calendar.google.com" tells the owner
+   * nothing about which calendar that is.
+   */
+  useEffect(() => {
+    if (view.kind !== "connected") return;
+    const id = view.status.calendarId;
+    if (!id) return;
+
+    let alive = true;
+
+    void (async () => {
+      try {
+        const result = await listCalendars();
+        if (!alive || !result.ok) return;
+        const match = result.calendars.find((choice) => choice.calendarId === id);
+        if (match) setCalendarName(match.name);
+      } catch {
+        // The id stays on screen. Nothing about the connection is in doubt.
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [view]);
+
+  /**
    * Ask Google for the calendar permission, on top of the identity the owner
    * already granted at sign-in.
    *
    * This is deliberately a second, later consent. Signing in asks for a name and
    * an email address and nothing else, so an owner who never wants a calendar is
-   * never asked about one. `linkSocial` adds the scope to the account that is
-   * already there rather than starting a new one.
+   * never asked about one. `linkSocial` adds the scopes to the account that is
+   * already there rather than starting a new one — and it is also the way *back*
+   * through consent for an owner whose grant is too narrow, because better-auth
+   * updates the stored scope from the callback and `lib/auth.ts` sets
+   * `prompt: "consent"`, which is what makes Google show the screen again
+   * instead of silently re-issuing the grant it already has.
    *
    * The browser leaves during this call — better-auth's own fetch plugin follows
    * the returned url — so there is no "back to idle" on the happy path and the
@@ -330,26 +253,27 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
 
       // Belt and braces: if the redirect plugin has already sent the browser,
       // assigning the same address again is a no-op.
-      const url = readString(data, "url");
+      const url = typeof data?.url === "string" ? data.url : null;
       if (url) window.location.href = url;
     } catch {
       setLeaving(false);
-      setError("We couldn't reach the server. Check your connection and try again.");
+      setError(TROUBLE);
     }
   }
 
   /** Every action lands here: one place that reports, refreshes, and reloads. */
-  function run(work: () => Promise<unknown>, success: string, fallback: string) {
+  function run(work: () => Promise<{ ok: boolean; error?: string }>, success: string, fallback: string) {
     setError(null);
     startWork(async () => {
       try {
-        const result = readResult(await work(), fallback);
+        const result = await work();
         if (result.ok) {
           toast.success(success, { id: "google-calendar" });
+          setCalendarName(null);
           router.refresh();
           reload();
         } else {
-          setError(result.error);
+          setError(result.error ?? fallback);
         }
       } catch {
         setError(fallback);
@@ -380,35 +304,43 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
     );
   }
 
+  if (view.kind === "unavailable") {
+    return (
+      <Frame headingId={headingId}>
+        <p className="text-sm text-pretty text-muted-foreground">{view.message}</p>
+      </Frame>
+    );
+  }
+
   const problem = error ? (
     <p role="alert" className="text-sm text-pretty text-destructive">
       {error}
     </p>
   ) : null;
 
-  /* --- 3. Connected ------------------------------------------------------- */
+  /* --- 5. Connected ------------------------------------------------------- */
 
   if (view.kind === "connected") {
-    const { calendarName, lastSyncedAt, failedCount } = view.connection;
+    const { calendarId, synced, failed } = view.status;
 
     return (
       <Frame headingId={headingId}>
         <div className="flex flex-col gap-1">
           <p className="text-base text-pretty">
             Stays are going to{" "}
-            <span className="font-medium">{calendarName}</span>.
+            <span className="font-medium">{calendarName ?? calendarId}</span>.
           </p>
           <p className="text-sm text-muted-foreground">
-            {lastSyncedAt
-              ? `Last went out ${whenSynced(lastSyncedAt)}.`
+            {synced > 0
+              ? `${plural(synced, "stay is", "stays are")} on it.`
               : "Nothing has gone out yet."}
           </p>
         </div>
 
-        {failedCount > 0 ? (
+        {failed > 0 ? (
           <div className="flex flex-col gap-1">
             <p className="text-sm text-pretty">
-              {plural(failedCount, "stay", "stays")} did not reach the calendar.
+              {plural(failed, "stay", "stays")} did not reach the calendar.
             </p>
             <p className="text-xs text-pretty text-muted-foreground">
               An expired grant is the usual cause. Disconnect, connect again, and
@@ -442,12 +374,12 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
     );
   }
 
-  /* --- 2b. Granted, no calendar chosen yet -------------------------------- */
+  /* --- 4. Granted, no calendar chosen yet --------------------------------- */
 
   if (view.kind === "choose") {
-    const { calendars } = view;
-    const selected = chosen || calendars[0]?.id || "";
-    const selectedName = calendars.find((c) => c.id === selected)?.name;
+    const { calendars, trouble } = view;
+    const selected = chosen || calendars[0]?.calendarId || "";
+    const selectedName = calendars.find((c) => c.calendarId === selected)?.name;
 
     return (
       <Frame headingId={headingId}>
@@ -461,11 +393,7 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
           <div className="flex flex-col gap-2">
             <Label htmlFor={pickerId}>Use one you already keep</Label>
 
-            <Select
-              value={selected}
-              onValueChange={setChosen}
-              disabled={busy}
-            >
+            <Select value={selected} onValueChange={setChosen} disabled={busy}>
               {/* The trigger's own height is `data-[size=default]:h-8` and an
                   attribute selector out-specifies a plain `h-11`. */}
               <SelectTrigger
@@ -476,7 +404,11 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
               </SelectTrigger>
               <SelectContent>
                 {calendars.map((calendar) => (
-                  <SelectItem key={calendar.id} value={calendar.id} className="min-h-11">
+                  <SelectItem
+                    key={calendar.calendarId}
+                    value={calendar.calendarId}
+                    className="min-h-11"
+                  >
                     {calendar.name}
                   </SelectItem>
                 ))}
@@ -499,6 +431,15 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
               {working ? "One moment…" : "Use this calendar"}
             </Button>
           </div>
+        ) : null}
+
+        {/* The list not arriving is worth saying, and worth saying *here* —
+            beside the offer that still works without it. */}
+        {trouble ? (
+          <p role="alert" className="text-sm text-pretty text-destructive">
+            {trouble} Your own calendars could not be listed, but a new one can
+            still be made.
+          </p>
         ) : null}
 
         <div className="flex flex-col gap-2">
@@ -531,15 +472,52 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
     );
   }
 
-  /* --- 2a. Set up, nothing connected -------------------------------------- */
+  /* --- 3. Connected once, with less than this needs ----------------------- */
+
+  if (view.kind === "consent") {
+    return (
+      <Frame headingId={headingId}>
+        <p className="text-base text-pretty">{view.message}</p>
+
+        {view.again ? (
+          <p className="text-sm text-pretty text-muted-foreground">
+            Nothing you set up is lost. Google will show you what it is asking
+            for, and you land back here.
+          </p>
+        ) : null}
+
+        <TwoWay />
+
+        {problem}
+
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy}
+          onClick={connect}
+          className="h-12 w-full text-base"
+        >
+          {leaving
+            ? "Taking you to Google…"
+            : view.again
+              ? "Ask Google again"
+              : "Give Google Calendar access"}
+        </Button>
+      </Frame>
+    );
+  }
+
+  /* --- 2. Set up, never connected ----------------------------------------- */
 
   return (
     <Frame headingId={headingId}>
       <p className="text-sm text-pretty text-muted-foreground">
-        Connecting lets the house write to one calendar, and read that same one.
-        Nothing else in your Google account is read or changed, and nobody is
-        emailed from Google — a guest&rsquo;s invitation is still the file on
-        their confirmation email.
+        Google will ask for two things: the names of your calendars, so you can
+        pick one — and permission to read and write events on the calendars you
+        own. This house only ever touches the single calendar you pick. Calendars
+        other people have shared with you stay out of reach, nothing is renamed
+        or deleted, and nobody is emailed from Google — a guest&rsquo;s
+        invitation is still the file on their confirmation email.
       </p>
 
       <TwoWay />
@@ -560,11 +538,50 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
 }
 
 /* ============================================================
+   STATUS → VIEW
+   ============================================================ */
+
+/**
+ * The one place a status becomes a panel.
+ *
+ * Only `not-chosen` calls Google, and only because choosing is what it is for.
+ * Every other state is decided from data the server already had.
+ */
+async function viewFor(status: ConnectStatus): Promise<View> {
+  switch (status.state) {
+    case "not-configured":
+      return { kind: "unavailable", message: status.message };
+
+    case "not-linked":
+      return { kind: "connect" };
+
+    case "needs-consent":
+      return { kind: "consent", message: status.message, again: status.reconsent };
+
+    case "not-chosen": {
+      // A list that does not arrive downgrades the picker and nothing else. The
+      // owner is connected either way, and "make me one" works either way.
+      try {
+        const result = await listCalendars();
+        return result.ok
+          ? { kind: "choose", calendars: result.calendars, trouble: null }
+          : { kind: "choose", calendars: [], trouble: result.error };
+      } catch {
+        return { kind: "choose", calendars: [], trouble: TROUBLE };
+      }
+    }
+
+    case "connected":
+      return { kind: "connected", status };
+  }
+}
+
+/* ============================================================
    PIECES
    ============================================================ */
 
 /**
- * The heading and the box, identical in all four renders above.
+ * The heading and the box, identical in every render above.
  *
  * `text-lg` and the `gap-4` column are what every other section on this screen
  * uses — Photos, The house, What you'll say yes to — so this one lands as

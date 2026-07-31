@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The house gallery, on the settings screen.
+ * The house gallery — the whole of `/app/photos`, below its heading.
  *
  * Two components that already exist, wired to the one action that already
  * exists: `PhotoStrip` in owner mode shows what is there and removes one,
@@ -21,6 +21,12 @@
  * The gallery rows are loaded in `page.tsx` and passed in, the same way
  * `SettingsForm` is handed its house.
  *
+ * ### It has no heading of its own
+ *
+ * It used to be one section on the settings screen and carried an `<h2>Photos`
+ * over a line of explanation. It is the screen now, so the page's own `<h1>`
+ * says it once and this is the strip and the picker underneath.
+ *
  * ### Confirming a delete
  *
  * There is no confirmation dialog in this file because `PhotoStrip` already
@@ -31,7 +37,6 @@
  * app around it.
  */
 
-import { useId } from "react";
 import { useRouter } from "next/navigation";
 
 import { deleteImage } from "@/app/_actions/image";
@@ -58,7 +63,6 @@ export type PhotosSectionProps = {
 
 export function PhotosSection({ houseId, houseName, photos }: PhotosSectionProps) {
   const router = useRouter();
-  const headingId = useId();
 
   /**
    * Hands the id to the action and, on success, asks the server for this page
@@ -75,20 +79,7 @@ export function PhotosSection({ houseId, houseName, photos }: PhotosSectionProps
   }
 
   return (
-    <section
-      aria-labelledby={headingId}
-      className="flex scroll-mt-20 flex-col gap-4"
-    >
-      <div className="flex flex-col gap-1">
-        <h2 id={headingId} className="text-lg">
-          Photos
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          The first thing anyone sees on your link. They appear in the order you
-          add them, so put the best one first.
-        </p>
-      </div>
-
+    <div className="flex flex-col gap-4">
       {/* Nothing to show yet, so nothing is shown. The strip's own empty panel
           is a dashed box that says "no photos" and cannot be tapped, sitting
           directly above a button that can — two things where the uploader's
@@ -115,6 +106,6 @@ export function PhotosSection({ houseId, houseName, photos }: PhotosSectionProps
         // strip grows a photo at a time rather than all at once at the end.
         onUploaded={() => router.refresh()}
       />
-    </section>
+    </div>
   );
 }

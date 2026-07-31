@@ -22,14 +22,26 @@
  * Signing in with Google asks for a name and an email address and stops
  * (`lib/auth.ts`). Calendar access is a **second, wider** consent, asked here
  * from Settings by someone who has already decided they want it. The scopes and
- * the reasoning behind each are in `lib/google/sync.ts`; the short version is
+ * the reasoning behind each are in `lib/google/types.ts`; the short version is
  * that reading a calendar the owner already keeps needs more than reading one
  * this app created, and the owner explicitly asked for the former.
  *
  * The button that *asks* for that second consent belongs to the settings screen
- * and calls better-auth's `linkSocial` with `CALENDAR_SYNC_SCOPES`. This file
+ * and calls better-auth's `linkSocial` with `GOOGLE_CALENDAR_SCOPES`. This file
  * reports whether it has been granted (`state: 'needs-consent'`) so that screen
  * knows when to show it.
+ *
+ * ### The grant that is real, and still not enough
+ *
+ * A widened scope is **never** granted retroactively. An owner who consented
+ * while this app asked for one narrow scope holds a grant Google will go on
+ * handing back for ever, and nothing about it looks broken: the account is
+ * linked, the refresh token works, the tokens refresh. It simply cannot do the
+ * job. So {@link connectStatus} does not ask "is Google linked" — it asks
+ * whether the *stored scope* still covers what the app now needs, and says which
+ * of the two problems it is (`reconsent`). Sending that owner back through
+ * consent is the fix; it takes one press and Google's `prompt: "consent"` makes
+ * the screen appear again rather than silently re-issuing the old grant.
  *
  * Everything an owner reads here is English — the dashboard is English in v1.
  */
@@ -39,14 +51,19 @@ import { revalidatePath } from "next/cache";
 import {
   connectionFor,
   googleAccount,
-  hasCalendarScope,
   isConnected,
   pullBlocks,
   setHouseCalendar,
+  syncCounts,
   type CalendarChoice,
 } from "@/lib/google/sync";
 import { isGoogleConfigured } from "@/lib/google/config";
-import { isGoogleCalendarError } from "@/lib/google/types";
+import {
+  hasCalendarScope,
+  hasPartialCalendarScope,
+  isGoogleCalendarError,
+  missingCalendarScopes,
+} from "@/lib/google/types";
 import { getOwnerHouse, requireOwner } from "@/lib/session";
 
 /* ============================================================
@@ -76,7 +93,21 @@ export type ConnectStatus = {
   message: string;
   /** The calendar the house is pointed at, if any. */
   calendarId: string | null;
+  /**
+   * `needs-consent` only, and the difference between two very different
+   * sentences: `true` means they granted calendar access once and this app has
+   * since asked for more, `false` means they have never been asked at all. The
+   * button is the same; the explanation must not be.
+   */
+  reconsent: boolean;
+  /** Stays that reached the calendar. Zero unless `connected`. */
+  synced: number;
+  /** Stays that were said yes to and did not reach it. Zero unless `connected`. */
+  failed: number;
 };
+
+/** The fields that are only ever interesting once a calendar is chosen. */
+const NOT_YET = { reconsent: false, synced: 0, failed: 0 } as const;
 
 export type ConnectStatusResult =
   | { ok: true; status: ConnectStatus }
@@ -98,6 +129,14 @@ const NO_HOUSE = "You do not have a house yet. Add one, then connect a calendar 
 const NOT_CONFIGURED = "Google is not set up on this app yet.";
 const NOT_LINKED = "Sign in with Google once, and your calendar can follow.";
 const NEEDS_CONSENT = "Google has your name, not your calendar. Give it access to go on.";
+/**
+ * The upgrade case, said without blaming the owner — they granted exactly what
+ * they were asked for, and the app changed its mind afterwards.
+ */
+const NEEDS_RECONSENT =
+  "This needs more of your calendar than you gave it last time — the weeks already " +
+  "in your own calendar can only be read with permission you have not granted yet. " +
+  "Google will ask you again.";
 const NOT_CHOSEN = "Pick the calendar the house should live on.";
 const CONNECTED = "The house is on your Google calendar.";
 
@@ -147,6 +186,13 @@ async function ownerHouse() {
  * Everything it reports comes from the environment, better-auth's `account` row
  * and the house — so a settings page can render it on every load without a
  * round trip to Google or a chance of an outage making the page fail.
+ *
+ * **This is the authority on which panel the settings screen draws.** It used to
+ * be one of two, the other being "call `listCalendars()` and see whether it
+ * works", and the two could disagree: a rate limit or a dropped connection made
+ * that probe fail, and a failed probe rendered "not connected" at an owner whose
+ * account was fine. A transient fault must never present as a missing grant —
+ * the button it puts on screen sends them back through Google for no reason.
  */
 export async function connectStatus(): Promise<ConnectStatusResult> {
   const house = await ownerHouse();
@@ -155,7 +201,7 @@ export async function connectStatus(): Promise<ConnectStatusResult> {
   if (!isGoogleConfigured()) {
     return {
       ok: true,
-      status: { state: "not-configured", message: NOT_CONFIGURED, calendarId: null },
+      status: { state: "not-configured", message: NOT_CONFIGURED, calendarId: null, ...NOT_YET },
     };
   }
 
@@ -170,27 +216,62 @@ export async function connectStatus(): Promise<ConnectStatusResult> {
   if (!linked || !linked.usable) {
     return {
       ok: true,
-      status: { state: "not-linked", message: NOT_LINKED, calendarId: null },
+      status: { state: "not-linked", message: NOT_LINKED, calendarId: null, ...NOT_YET },
     };
   }
 
+  // The stored scope, not the stored account. An owner can be linked, refreshing
+  // tokens happily, and still hold a grant that predates what this app asks for.
   if (!hasCalendarScope(linked.scope)) {
+    const reconsent = hasPartialCalendarScope(linked.scope);
+
+    // For whoever set the deployment up, not for the owner. A grant that stays
+    // short *after* the owner has consented again means the scope is missing
+    // from the OAuth consent screen in the Google Cloud console — Google drops
+    // an undeclared scope silently, so this log line is the only place the
+    // difference between "they have not pressed the button" and "the console is
+    // wrong" ever shows up. Naming the exact strings makes the fix a copy-paste.
+    if (reconsent) {
+      console.warn(
+        "[google] the stored grant is missing scopes:",
+        missingCalendarScopes(linked.scope).join(" "),
+        "— check the OAuth consent screen lists them. See SETUP-GOOGLE.md.",
+      );
+    }
+
     return {
       ok: true,
-      status: { state: "needs-consent", message: NEEDS_CONSENT, calendarId: null },
+      status: {
+        state: "needs-consent",
+        message: reconsent ? NEEDS_RECONSENT : NEEDS_CONSENT,
+        // Deliberately not `null`: an owner upgrading a grant may already have a
+        // calendar chosen, and forgetting it here would make them pick again.
+        calendarId: house.googleCalendarId,
+        reconsent,
+        synced: 0,
+        failed: 0,
+      },
     };
   }
 
   if (!house.googleCalendarId) {
     return {
       ok: true,
-      status: { state: "not-chosen", message: NOT_CHOSEN, calendarId: null },
+      status: { state: "not-chosen", message: NOT_CHOSEN, calendarId: null, ...NOT_YET },
     };
   }
 
+  const counts = await syncCounts(house.id);
+
   return {
     ok: true,
-    status: { state: "connected", message: CONNECTED, calendarId: house.googleCalendarId },
+    status: {
+      state: "connected",
+      message: CONNECTED,
+      calendarId: house.googleCalendarId,
+      reconsent: false,
+      ...counts,
+    },
   };
 }
 
@@ -199,11 +280,18 @@ export async function connectStatus(): Promise<ConnectStatusResult> {
    ============================================================ */
 
 /**
- * The calendars the owner can write to, their default one first.
+ * The calendars the owner owns, their default one first.
  *
- * Read-only subscriptions — a holidays feed, a football fixture list — are
- * filtered out by Google itself (`minAccessRole: 'writer'`), because offering
- * one would be offering a dead end.
+ * Anything they merely subscribe to or were given write access to — a holidays
+ * feed, a shared work calendar — is filtered out by Google itself
+ * (`minAccessRole: 'owner'`), because the grant this app holds is
+ * `calendar.events.owned` and offering a calendar it cannot write to would be
+ * offering a dead end.
+ *
+ * **An empty list is a success, not a failure.** It means Google answered and
+ * the owner owns no calendar this app can use, which is a state with an obvious
+ * next step — make one — and the caller must offer that rather than reading
+ * `[]` as a broken connection.
  */
 export async function listCalendars(): Promise<CalendarListResult> {
   const house = await ownerHouse();

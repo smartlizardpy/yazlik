@@ -222,7 +222,8 @@ const SHORT_MONTHS: Record<Lang, readonly string[]> = {
 
 /** The pieces of a spoken date. An absent piece is one that is not said. */
 type SpokenDay = {
-  weekday: string;
+  /** Optional: Turkish ranges drop it, because the word order fights it. */
+  weekday?: string;
   day: number;
   month?: string;
   year?: number;
@@ -320,11 +321,31 @@ export function humanRange(
 
   const speak = SPEAK[lang];
 
+  // Turkish says a range without weekdays.
+  //
+  // The English shape puts the weekday first, so dropping the shared month off
+  // the near end still reads: "Tue 18 – Sun 23 Aug". Turkish orders it day,
+  // month, weekday, and the same trick produces "3 Pzt – 8 Ağu Cmt" — the month
+  // arriving late and two weekdays left dangling off the ends. It is not how
+  // anybody writes a date to their family, which is the register this product
+  // lives in.
+  //
+  // "3 – 8 Ağustos" is what a Turk actually sends. So the weekdays come off, and
+  // the month is written in full because the abbreviations are far less
+  // idiomatic in Turkish than in English. A single day keeps its weekday in both
+  // languages — there the word order is not fighting anything.
+  const dropWeekday = lang === "tr";
+  const monthName = (date: Date) =>
+    dropWeekday
+      ? t(`month.${date.getMonth() + 1}`, lang)
+      : SHORT_MONTHS[lang][date.getMonth()];
+
   return t("format.range", lang, {
     from: speak({
       ...parts(from, lang),
+      weekday: dropWeekday ? undefined : parts(from, lang).weekday,
       // Said once, on the far end, when both ends share it.
-      month: sameMonth ? undefined : SHORT_MONTHS[lang][from.getMonth()],
+      month: sameMonth ? undefined : monthName(from),
       year:
         sameYear || from.getFullYear() === year
           ? undefined
@@ -332,6 +353,8 @@ export function humanRange(
     }),
     to: speak({
       ...parts(to, lang),
+      weekday: dropWeekday ? undefined : parts(to, lang).weekday,
+      month: monthName(to),
       year: to.getFullYear() === year ? undefined : to.getFullYear(),
     }),
   });
