@@ -284,12 +284,24 @@ async function guestNamesByRange(house: House): Promise<Map<string, string>> {
  * what makes the page open like the front of a card rather than a banner.
  *
  * **Without one** it is a different composition, not the same one with a hole
- * in it. Holding 52svh of empty paper above the name gave a new house — and
- * every house is a new house on day one — six hundred pixels of nothing to
- * scroll past before it said who it was. So the block stops being a stage for a
- * picture and becomes the invitation itself: deeper paper, its height set by
- * the three lines on it, and enough room around them that the name reads as
- * written rather than stranded. Same words, same order, same forty points.
+ * in it — and it is the one every house gets on day one, so it has to stand up
+ * on its own rather than read as a picture that failed to load.
+ *
+ * What it was: a flat `bg-secondary` rectangle with a hard rule under it,
+ * holding three lines and nothing else. A slab. Three changes fix that without
+ * adding any decoration:
+ *
+ * - **The name is forty-eight points, not forty.** It is the largest thing in
+ *   the product, which is right, because on a page with no photograph it is the
+ *   only thing carrying the house at all. Long names take two lines; `text-balance`
+ *   breaks them evenly, and a two-line name at this size reads as written.
+ * - **The paper is deeper at the top and ends in the page.** A gradient from
+ *   `secondary` into `background` rather than a filled block, so there is no
+ *   edge where the hero stops — the invitation is on the same sheet as the rest
+ *   of it. The `border-b` goes with it; a rule there was drawing the slab.
+ * - **One ink hairline above the first line.** The only mark on the page that
+ *   is not type or photograph. It is what the top of a written card has, and it
+ *   gives the block a beginning instead of starting mid-air.
  *
  * `black/70` and `white` are the only colours in this file that are not tokens,
  * and they are on the scrim over a photograph, where the contrast has to hold
@@ -311,11 +323,12 @@ function Hero({
 
   if (!photo) {
     return (
-      <header className="-mx-4 flex flex-col border-b border-border bg-secondary px-4 pt-12 pb-11">
+      <header className="-mx-4 flex flex-col bg-linear-to-b from-secondary via-secondary to-background px-4 pt-12 pb-10">
+        <span aria-hidden="true" className="mb-6 h-px w-10 bg-foreground/25" />
         {/* The first words. Not the town, not the rules — the invitation. */}
         <p className="text-sm text-muted-foreground">{t("house.invite", lang)}</p>
-        <h1 className="mt-2.5 text-3xl text-balance">{house.name}</h1>
-        <p className="mt-3 text-sm text-muted-foreground">{town}</p>
+        <h1 className="mt-2 text-4xl text-balance">{house.name}</h1>
+        <p className="mt-4 text-sm text-muted-foreground">{town}</p>
       </header>
     );
   }
@@ -409,14 +422,18 @@ export default async function HousePage(props: PageProps<"/h/[slug]">) {
         // No top padding: the hero runs to the top of the glass, which is what
         // makes it read as the front of a card rather than a banner on a page.
         "flex flex-col gap-8 pb-10",
-        // Clears the pinned bar in request-sheet.tsx, which is at most
-        // 1 + 12 + 24 + 8 + 48 = 93px of its own plus its bottom inset — a
-        // hairline, the chosen dates, the gap and a 48px button. 9rem leaves
-        // roughly the page's own rhythm of paper under the last row of the
-        // calendar rather than the 15px the old 7.5rem left, which cleared the
-        // bar arithmetically and still read as the grid being sat on. Keep the
-        // two in step: the bar must never cover the last row.
-        open && "pb-[calc(9rem+env(safe-area-inset-bottom))]",
+        // Clears the pinned bar in request-sheet.tsx. At its tallest — a
+        // hairline, 12px, the chosen dates at 24px, an 8px gap, a 48px button
+        // and 12px — that bar is 105px, and it only reaches 105px once someone
+        // has picked their nights; before that it is 73px.
+        //
+        // 9rem here was 39px of clear paper in the first case and 71px in the
+        // second, and the second is the one the page opens in. Seventy-one
+        // pixels of nothing under the last sentence is the bottom third of a
+        // phone screen holding no content. 8rem brings that to 23px and 55px,
+        // and the who-else line above now reaches into it. Keep the two in
+        // step: the bar must never cover the last row of the calendar.
+        open && "pb-[calc(8rem+env(safe-area-inset-bottom))]",
       )}
     >
       <Hero house={house} lang={lang} photo={cover ?? null} />
@@ -425,14 +442,31 @@ export default async function HousePage(props: PageProps<"/h/[slug]">) {
       {/* "Five minutes from Ilıca beach, up the hill behind the bakery" is the
           best content in this product and it was 17px of body text. It is the
           sentence that makes someone want to come, so it gets the display face
-          and the room. */}
-      <section className="flex flex-col gap-4">
+          and the room.
+
+          "Room for 6, from May to October." is a specification, and it was set
+          at 17px directly under it — near enough the same size, in the same
+          column, so the page had two voices talking at once and the machine was
+          not the quieter of the two. It drops to 15px muted: a footnote to the
+          sentence above it, which is what it is.
+
+          Unless there is no sentence above it. A house whose owner has not
+          written a blurb yet has nothing else to say, and 15px of grey is not a
+          welcome — so with no blurb this line takes the display face instead.
+          One voice either way, never two. */}
+      <section className="flex flex-col gap-3">
         {blurb ? (
           <p className="font-heading text-lg text-pretty whitespace-pre-line">
             {blurb}
           </p>
         ) : null}
-        <p className="text-base text-muted-foreground">
+        <p
+          className={
+            blurb
+              ? "text-sm text-muted-foreground"
+              : "font-heading text-lg text-pretty"
+          }
+        >
           {welcomeLine(rules, lang)}
         </p>
       </section>
@@ -454,7 +488,7 @@ export default async function HousePage(props: PageProps<"/h/[slug]">) {
           line in the calendar's own footer telling you where to start; the
           three separate explanations that used to sit on top of it said the
           same thing three times to somebody who had already worked it out. */}
-      <section className="flex flex-col gap-4">
+      <section className="flex flex-col gap-5">
         {open ? (
           <RequestSheet
             slug={house.slug}
@@ -473,7 +507,19 @@ export default async function HousePage(props: PageProps<"/h/[slug]">) {
           <p className="text-base">{t("house.closed", lang)}</p>
         )}
 
-        {whoElse ? <p className="text-sm">{whoElse}</p> : null}
+        {/* "Selin has a week here already." is the only sentence on this page
+            with a person in it, and the entire reason `showGuestNames` exists.
+            It was 15px — smaller than the capacity line above the calendar, so
+            the page was setting a database row larger than a cousin. It gets
+            the display face and 22 points, the same weight as the blurb: the
+            house speaks at the top of the page, the family speaks at the
+            bottom, and the ask sits between them.
+
+            It also lands in the strip of paper above the pinned bar, which
+            used to hold nothing at all. */}
+        {whoElse ? (
+          <p className="font-heading text-lg text-pretty">{whoElse}</p>
+        ) : null}
       </section>
     </article>
   );

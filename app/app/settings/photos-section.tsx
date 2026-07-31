@@ -77,37 +77,41 @@ export function PhotosSection({ houseId, houseName, photos }: PhotosSectionProps
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h2 id={headingId} className="text-sm font-medium">
+        <h2 id={headingId} className="text-lg">
           Photos
         </h2>
-        <p className="text-xs text-muted-foreground">
-          The first thing a guest sees on your link. They appear in the order
-          you add them, so lead with the one that sells the place.
+        <p className="text-sm text-muted-foreground">
+          The first thing anyone sees on your link. They appear in the order you
+          add them, so put the best one first.
         </p>
       </div>
 
-      <PhotoStrip
-        photos={photos}
-        houseName={houseName}
-        onDelete={removePhoto}
-        // The strip has no gutter of its own: cancel the page's and put it
-        // back inside, so photos run to the edge of the screen.
-        className="-mx-4 px-4"
-      />
+      {/* Nothing to show yet, so nothing is shown. The strip's own empty panel
+          is a dashed box that says "no photos" and cannot be tapped, sitting
+          directly above a button that can — two things where the uploader's
+          panel is one, and that one opens the camera roll. */}
+      {photos.length > 0 ? (
+        <PhotoStrip
+          photos={photos}
+          houseName={houseName}
+          onDelete={removePhoto}
+          // The strip has no gutter of its own: cancel the page's and put it
+          // back inside, so photos run to the edge of the screen.
+          className="-mx-4 px-4"
+        />
+      ) : null}
 
       <ImageUploader
         houseId={houseId}
         max={GALLERY_MAX}
         count={photos.length}
+        // With no photos above it, the picker is the whole block and looks like
+        // one: a dashed panel the size of the strip it is about to become.
+        variant={photos.length === 0 ? "panel" : "button"}
         // Every photo that lands. The uploader sends them one at a time, so the
         // strip grows a photo at a time rather than all at once at the end.
         onUploaded={() => router.refresh()}
       />
-
-      <p className="text-xs text-muted-foreground">
-        Photos save the moment they upload, and removing one is immediate.
-        Save changes at the bottom is only for the settings below.
-      </p>
     </section>
   );
 }

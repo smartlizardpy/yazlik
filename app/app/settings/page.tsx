@@ -44,11 +44,14 @@ export default async function SettingsPage() {
 
   return (
     <section className="flex flex-1 flex-col gap-6 py-6">
+      {/* A statement, at the size every other h1 in the product is. "Settings"
+          named the panel rather than the screen — what is actually here is the
+          house as everyone else meets it, and what you have already agreed to. */}
       <header className="flex flex-col gap-2">
-        <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          How your house reads on the link you share, and the rules every
-          request has to meet.
+        <h1 className="text-2xl text-balance">How the house reads</h1>
+        <p className="text-base text-muted-foreground">
+          The photos and words on your link, and what you will say yes to when
+          someone asks.
         </p>
       </header>
 

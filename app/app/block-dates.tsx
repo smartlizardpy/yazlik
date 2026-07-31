@@ -135,8 +135,18 @@ export function BlockDates({ today, takenDates, pendingDates }: BlockDatesProps)
         if (!next) reset();
       }}
     >
+      {/* Housekeeping, and it should look like it. As a full-width outlined
+          button it was the same rectangle as "Share the house" sitting eight
+          pixels above it, and a host scanning the foot of the page found two
+          equals where one of them is the reason the product exists. So it drops
+          to the weight of "Unblock" in the same section — same 44px target,
+          none of the furniture — and aligns with the section's own heading. */}
       <SheetTrigger asChild>
-        <Button type="button" variant="outline" className="h-11 w-full text-base">
+        <Button
+          type="button"
+          variant="ghost"
+          className="-ml-3 h-11 self-start px-3 text-base font-normal text-muted-foreground"
+        >
           Block dates
         </Button>
       </SheetTrigger>

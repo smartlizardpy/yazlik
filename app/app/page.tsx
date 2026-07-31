@@ -12,9 +12,10 @@
  * 2. **The summer, laid out.** A scrolling strip of the open months with the
  *    weeks filled in — the model every house owner already holds in their head
  *    and the one thing two stacked lists cannot show: *shape*. One shelf per
- *    month, ink across the weeks that are spoken for, and a lane underneath —
+ *    month, ink across the weeks that are spoken for, and lanes underneath —
  *    on the same shelf, not floating below it — carrying a dashed outline for
- *    the weeks somebody has asked about.
+ *    each week somebody has asked about. Two people asking for one week is two
+ *    outlines on two lines; see {@link dealIntoLanes}.
  * 3. **The asks**, each one a card with a face on it.
  * 4. **Who is coming**, in exactly the same card.
  * 5. **The link**, which is the whole reason the product exists.
@@ -34,8 +35,12 @@
  * reading an error. So every pending request is compared with
  * {@link rangesOverlap} against two things:
  *
- * - **the other pending requests** → `clashes`, drawn on both cards, because
- *   saying yes to either one rules the other out;
+ * - **the other pending requests** → `clashes`, gathered into groups by
+ *   {@link clashGroups}. The rule — you can only say yes to one — is a fact
+ *   about the pair, so it is stated once above them, and each card carries only
+ *   the name of who it is up against. Printing the whole sentence on both cards
+ *   made two identical dashed boxes inside one scroll, which reads as a
+ *   template rather than as a person telling you something;
  * - **every confirmed range** (`busyRanges`, stays and owner blocks alike) →
  *   `taken`, which removes the yes entirely.
  *
@@ -147,11 +152,12 @@ function initial(b: Booking): string | null {
    strip is to scale: a fortnight looks twice a week. Ten pixels a day puts one
    whole August on a 390px screen with the edge of September showing — enough
    to say "there is more, push it" — and leaves a week 70px, which is a first
-   name. Carrying the names is the entire point of drawing this rather than
-   listing it, so a block too narrow to hold its own name does not go
-   anonymous: the name steps onto the empty shelf beside it. A four-night
-   block reading "Roof repair" in the paper next to it is the whole month
-   understood; the same block silent is a grey smudge in September.
+   name. A week that is wide enough carries its name; one that is not stays
+   silent. Names used to step onto the shelf beside a block too narrow to hold
+   them, which reads as a label for whatever it is standing next to rather than
+   for the block behind it — a stray word floating on bare paper. This is a
+   picture of the shape of the summer, and every one of these people is named
+   in full on a card a thumb's length below.
    ============================================================ */
 
 const DAY_PX = 10;
@@ -159,8 +165,9 @@ const DAY_PX = 10;
 /** Below this a name inside a block would be two letters and an ellipsis. */
 const NAME_FITS_PX = 56;
 
-/** So it stands beside the block instead — if there is this much clear shelf. */
-const NAME_BESIDE_PX = 40;
+/** One lane of the shelf: the ink row of stays, and each row of asks. */
+const STAY_LANE_PX = 36;
+const ASK_LANE_PX = 26;
 
 /**
  * A month with fewer days left than this, and nothing in them, is not worth
@@ -192,6 +199,8 @@ type StripSpan = {
   label: string;
   /** `true` when the host is holding the nights themselves. */
   held: boolean;
+  /** Which row of its lane the span is drawn on. See {@link dealIntoLanes}. */
+  lane: number;
 };
 
 function pad2(n: number): string {
@@ -257,30 +266,59 @@ function monthsFrom(first: DateStr, last: DateStr): StripMonth[] {
   return out;
 }
 
+/**
+ * Deal spans into rows so that two of them are never drawn on top of each
+ * other.
+ *
+ * This is not decoration. Two cousins asking for the same week in August is the
+ * single state this screen exists to resolve, and it is exactly the state a
+ * one-row lane cannot draw: identical dates give identical `left` and `width`,
+ * one dashed outline lands precisely on the other, and under a headline reading
+ * "Two people are asking" the picture says one. So a span takes the first row
+ * whose previous occupant has already left, and a clash pushes down a line.
+ *
+ * The rows are dealt once for the whole season rather than per month, for two
+ * reasons: a stay that crosses into September stays on the line it was on in
+ * August, and every month's shelf is the same height, so the strip scrolls as
+ * one shelf instead of a skyline.
+ */
+function dealIntoLanes(spans: readonly Omit<StripSpan, "lane">[]): StripSpan[] {
+  // The last night each row is spoken for. `YYYY-MM-DD` compares as a date.
+  const ends: DateStr[] = [];
+
+  return [...spans]
+    .sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0))
+    .map((span) => {
+      const found = ends.findIndex((end) => end <= span.startDate);
+      const lane = found === -1 ? ends.length : found;
+      // Chosen because it was free at `startDate`, so this end is the later one.
+      ends[lane] = span.endDate;
+      return { ...span, lane };
+    });
+}
+
+/** How many rows {@link dealIntoLanes} ended up needing. */
+function laneCount(spans: readonly StripSpan[]): number {
+  return spans.reduce((most, span) => Math.max(most, span.lane + 1), 0);
+}
+
 /** One span, clipped to one month and measured for drawing. */
 type Piece = {
   key: string;
   label: string;
   held: boolean;
+  lane: number;
   /** Percentages of the month's width. */
   left: string;
   width: string;
-  /** Inside the block, on the shelf after it, or — no room either way — not at all. */
-  name: "inside" | "beside" | null;
-  besideLeft: string;
-  besideWidth: string;
+  /** Wide enough to hold its own name. Narrower than that, it says nothing. */
+  named: boolean;
 };
 
-/**
- * Every span that touches `month`, in order, each one told where its name goes.
- *
- * Placed as a set rather than one at a time because "is there room beside it"
- * is a question about the neighbours: the shelf after a block is only free up
- * to whatever starts next, and a name written across the following stay would
- * be worse than no name at all.
- */
+/** Every span that touches `month`, measured against that month's width. */
 function placeInMonth(spans: readonly StripSpan[], month: StripMonth): Piece[] {
-  const clipped: { span: StripSpan; from: number; to: number }[] = [];
+  const pct = (days: number) => `${(days / month.days) * 100}%`;
+  const pieces: Piece[] = [];
 
   for (const span of spans) {
     const start = later(span.startDate, month.first);
@@ -291,43 +329,19 @@ function placeInMonth(spans: readonly StripSpan[], month: StripMonth): Piece[] {
     const to = end === month.next ? month.days : Number(end.slice(8, 10)) - 1;
     if (to <= from) continue;
 
-    clipped.push({ span, from, to });
-  }
-
-  clipped.sort((a, b) => a.from - b.from);
-
-  const pct = (days: number) => `${(days / month.days) * 100}%`;
-
-  return clipped.map(({ span, from, to }, index) => {
     const nights = to - from;
-    // Clear shelf between the end of this block and whatever comes next.
-    const clear = (clipped[index + 1]?.from ?? month.days) - to;
-    const fits = nights * DAY_PX >= NAME_FITS_PX;
-    const beside = !fits && clear * DAY_PX >= NAME_BESIDE_PX;
-
-    return {
+    pieces.push({
       key: span.key,
       label: span.label,
       held: span.held,
+      lane: span.lane,
       left: pct(from),
       width: pct(nights),
-      name: fits ? "inside" : beside ? "beside" : null,
-      besideLeft: pct(to),
-      besideWidth: pct(clear),
-    };
-  });
-}
+      named: nights * DAY_PX >= NAME_FITS_PX,
+    });
+  }
 
-/** A name that would not fit in its block, standing on the shelf beside it. */
-function BesideName({ piece }: { piece: Piece }) {
-  return (
-    <span
-      style={{ left: piece.besideLeft, width: piece.besideWidth }}
-      className="absolute inset-y-0 flex items-center overflow-hidden ps-1.5 text-xs"
-    >
-      <span className="truncate">{piece.label}</span>
-    </span>
-  );
+  return pieces;
 }
 
 /* ============================================================
@@ -367,7 +381,9 @@ function Who({ booking }: { booking: Booking }) {
     <div className="flex items-center gap-3">
       <Face letter={initial(booking)} />
       <div className="min-w-0">
-        <h3 className="font-heading text-2xl leading-none break-words">
+        {/* A size below the headline on purpose. Six names all set at the size
+            of the news is a screen with no news on it. */}
+        <h3 className="font-heading text-xl leading-none break-words">
           {nameOf(booking)}
         </h3>
         <p className="num mt-1.5 text-base">
@@ -386,6 +402,38 @@ type PendingCard = {
   /** A confirmed stay or an owner block already holds these nights. */
   taken: boolean;
 };
+
+/**
+ * The asks that are competing, gathered into the sets that resolve together.
+ *
+ * Walked transitively rather than pairwise: three asks over one fortnight can
+ * clash A–B and B–C without A and C sharing a night, and they are still one
+ * decision. Almost always there is one group of two, and that is the sentence
+ * above the pair.
+ */
+function clashGroups(cards: readonly PendingCard[]): Booking[][] {
+  const byId = new Map(cards.map((card) => [card.booking.id, card]));
+  const seen = new Set<string>();
+  const groups: Booking[][] = [];
+
+  for (const card of cards) {
+    if (card.clashes.length === 0 || seen.has(card.booking.id)) continue;
+
+    const group = [card.booking];
+    seen.add(card.booking.id);
+    // `group` grows as it is walked — a queue that keeps its own answer.
+    for (let i = 0; i < group.length; i++) {
+      for (const other of byId.get(group[i].id)?.clashes ?? []) {
+        if (seen.has(other.id)) continue;
+        seen.add(other.id);
+        group.push(other);
+      }
+    }
+    groups.push(group);
+  }
+
+  return groups;
+}
 
 export default async function DashboardPage() {
   const house = await requireHouse();
@@ -463,20 +511,30 @@ export default async function DashboardPage() {
 
   /* --- The summer, laid out -------------------------------------------- */
 
-  const staying: StripSpan[] = upcoming.map((b) => ({
-    key: b.id,
-    startDate: b.startDate,
-    endDate: b.endDate,
-    label: nameOf(b),
-    held: b.kind === "block",
-  }));
-  const asked: StripSpan[] = pending.map((b) => ({
-    key: b.id,
-    startDate: b.startDate,
-    endDate: b.endDate,
-    label: nameOf(b),
-    held: false,
-  }));
+  const staying = dealIntoLanes(
+    upcoming.map((b) => ({
+      key: b.id,
+      startDate: b.startDate,
+      endDate: b.endDate,
+      label: nameOf(b),
+      held: b.kind === "block",
+    })),
+  );
+  const asked = dealIntoLanes(
+    pending.map((b) => ({
+      key: b.id,
+      startDate: b.startDate,
+      endDate: b.endDate,
+      label: nameOf(b),
+      held: false,
+    })),
+  );
+
+  // `bookings_no_overlap` keeps confirmed nights to one row, so the ink lane is
+  // dealt for symmetry and stays a single line in practice. The asks are where
+  // the rows are earned.
+  const stayLanes = Math.max(1, laneCount(staying));
+  const askLanes = laneCount(asked);
 
   const seasonFrom = openingMonth(later(house.bookableFrom ?? today, today), [
     ...staying,
@@ -498,11 +556,23 @@ export default async function DashboardPage() {
 
   const months = monthsFrom(seasonFrom, horizon);
 
+  /* --- The clash, said once --------------------------------------------- */
+
+  const groups = clashGroups(cards);
+  const clash =
+    groups.length === 1
+      ? `${listOf(groups[0].map(nameOf))} asked for the same week. You can only say yes to one.`
+      : groups.length > 1
+        ? "Some of these asks want the same nights. Each week can only go to one of them."
+        : null;
+
   return (
     <div className="flex flex-1 flex-col gap-10 pt-5 pb-4">
       {/* Headline + the summer ---------------------------------------------- */}
       <section className="flex flex-col gap-5">
-        <h1 className="text-2xl text-balance">{headline}</h1>
+        {/* The news, and the largest thing on the screen — a step above the
+            names on the cards, which are the second-largest. */}
+        <h1 className="text-3xl text-balance">{headline}</h1>
 
         {/* Everything drawn here is also written out in the lists below, so the
             strip is a picture and nothing else. Announcing it twice would make
@@ -551,50 +621,58 @@ export default async function DashboardPage() {
                       />
                     ) : null}
 
-                    <div className="relative h-9">
+                    <div
+                      className="relative"
+                      style={{ height: stayLanes * STAY_LANE_PX }}
+                    >
                       {stays.map((piece) => (
                         <span
                           key={piece.key}
-                          style={{ left: piece.left, width: piece.width }}
+                          style={{
+                            left: piece.left,
+                            width: piece.width,
+                            top: piece.lane * STAY_LANE_PX,
+                            height: STAY_LANE_PX,
+                          }}
                           className={
                             piece.held
-                              ? "absolute inset-y-0 flex items-center overflow-hidden rounded-sm bg-foreground/25 px-1.5 text-xs"
-                              : "absolute inset-y-0 flex items-center overflow-hidden rounded-sm bg-foreground px-1.5 text-xs text-background"
+                              ? "absolute flex items-center overflow-hidden rounded-sm bg-foreground/25 px-1.5 text-xs"
+                              : "absolute flex items-center overflow-hidden rounded-sm bg-foreground px-1.5 text-xs text-background"
                           }
                         >
-                          {piece.name === "inside" ? (
+                          {piece.named ? (
                             <span className="truncate">{piece.label}</span>
                           ) : null}
                         </span>
                       ))}
-                      {stays.map((piece) =>
-                        piece.name === "beside" ? (
-                          <BesideName key={`${piece.key}-name`} piece={piece} />
-                        ) : null,
-                      )}
                     </div>
 
-                    {/* The lane only exists when somebody has asked, so a house
+                    {/* The lanes only exist when somebody has asked, so a house
                         with no unanswered requests keeps a single-height shelf
-                        rather than a strip of empty gutter. */}
-                    {asked.length > 0 ? (
-                      <div className="relative h-7 bg-foreground/5">
+                        rather than a strip of empty gutter. One row per clashing
+                        ask: two people on one week are two outlines, stacked,
+                        never one pill drawn twice. */}
+                    {askLanes > 0 ? (
+                      <div
+                        className="relative bg-foreground/5"
+                        style={{ height: askLanes * ASK_LANE_PX }}
+                      >
                         {asks.map((piece) => (
                           <span
                             key={piece.key}
-                            style={{ left: piece.left, width: piece.width }}
-                            className="absolute inset-y-1 flex items-center overflow-hidden rounded-sm border border-dashed border-foreground/55 px-1.5 text-xs"
+                            style={{
+                              left: piece.left,
+                              width: piece.width,
+                              top: piece.lane * ASK_LANE_PX + 3,
+                              height: ASK_LANE_PX - 6,
+                            }}
+                            className="absolute flex items-center overflow-hidden rounded-sm border border-dashed border-foreground/55 px-1.5 text-xs"
                           >
-                            {piece.name === "inside" ? (
+                            {piece.named ? (
                               <span className="truncate">{piece.label}</span>
                             ) : null}
                           </span>
                         ))}
-                        {asks.map((piece) =>
-                          piece.name === "beside" ? (
-                            <BesideName key={`${piece.key}-name`} piece={piece} />
-                          ) : null,
-                        )}
                       </div>
                     ) : null}
                   </div>
@@ -607,47 +685,58 @@ export default async function DashboardPage() {
 
       {/* The asks ----------------------------------------------------------- */}
       {cards.length > 0 ? (
-        <ul className="flex flex-col gap-4">
-          {cards.map(({ booking, clashes, taken }) => {
-            const nights = nightsBetween(booking.startDate, booking.endDate);
-            return (
-              <li key={booking.id}>
-                <article className={`${CARD} ring-foreground/25`}>
-                  <Who booking={booking} />
+        <section className="flex flex-col gap-4">
+          {/* Said once, above the pair it is about. It used to sit inside both
+              cards, word for word, which is a template talking — and the second
+              one taught the host nothing the first had not. */}
+          {clash ? (
+            <p className="rounded-lg border border-dashed border-foreground/40 px-3 py-2 text-sm">
+              {clash}
+            </p>
+          ) : null}
 
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    {sentence(nightsPhrase(nights))}, {spell(booking.guests)}{" "}
-                    {plural(booking.guests, "person", "people")}
-                  </p>
+          <ul className="flex flex-col gap-4">
+            {cards.map(({ booking, clashes, taken }) => {
+              const nights = nightsBetween(booking.startDate, booking.endDate);
+              return (
+                <li key={booking.id}>
+                  <article className={`${CARD} ring-foreground/25`}>
+                    <Who booking={booking} />
 
-                  {/* Their own words, at a size a person can read. */}
-                  {booking.note ? (
-                    <p className="mt-3 border-l border-border pl-3 text-base break-words">
-                      {booking.note}
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      {sentence(nightsPhrase(nights))}, {spell(booking.guests)}{" "}
+                      {plural(booking.guests, "person", "people")}
                     </p>
-                  ) : null}
 
-                  {/* The clash, on the card, before the tap. Both asks carry it —
-                      neither is the one that "came second". */}
-                  {clashes.length > 0 ? (
-                    <p className="mt-3 rounded-lg border border-dashed border-foreground/40 px-3 py-2 text-sm">
-                      {listOf(clashes.map(nameOf))} asked for the same week. You
-                      can only say yes to one.
-                    </p>
-                  ) : null}
+                    {/* Only who, not the rule — that is already stated above the
+                        pair, and a host reading down the cards needs to know
+                        which of them this one is up against. */}
+                    {clashes.length > 0 ? (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Same week as {listOf(clashes.map(nameOf))}.
+                      </p>
+                    ) : null}
 
-                  <div className="mt-4">
-                    <RequestActions
-                      bookingId={booking.id}
-                      guestName={nameOf(booking)}
-                      taken={taken}
-                    />
-                  </div>
-                </article>
-              </li>
-            );
-          })}
-        </ul>
+                    {/* Their own words, at a size a person can read. */}
+                    {booking.note ? (
+                      <p className="mt-3 border-l border-border pl-3 text-base break-words">
+                        {booking.note}
+                      </p>
+                    ) : null}
+
+                    <div className="mt-4">
+                      <RequestActions
+                        bookingId={booking.id}
+                        guestName={nameOf(booking)}
+                        taken={taken}
+                      />
+                    </div>
+                  </article>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       ) : null}
 
       {/* Who is coming ------------------------------------------------------ */}
@@ -714,16 +803,23 @@ export default async function DashboardPage() {
       {/* The mechanism the whole product exists to deliver, so it is a target
           you could hit with your eyes shut. It takes the ink only when there is
           no ask waiting: exactly one primary action per screen, and an unanswered
-          request outranks everything. */}
+          request outranks everything.
+
+          It is set in Inter, not the display face. It sits a thumb-width under
+          "Block dates", and while it wore Fraunces the two of them were the same
+          rectangle in two typefaces — which reads as a pair of equals rather
+          than a rank. One face for the things you tap, and the rank carried
+          where it belongs: this one is a filled or outlined row, blocking dates
+          is a quiet line of housekeeping with no box around it at all. */}
       <Link
         href="/app/share"
         className={
           cards.length === 0
-            ? "flex min-h-14 items-center justify-between gap-3 rounded-xl bg-primary px-4 py-3 text-primary-foreground"
-            : "flex min-h-14 items-center justify-between gap-3 rounded-xl border border-foreground/25 px-4 py-3"
+            ? "flex min-h-14 items-center justify-between gap-3 rounded-xl bg-primary px-4 py-3 text-base font-medium text-primary-foreground"
+            : "flex min-h-14 items-center justify-between gap-3 rounded-xl border border-foreground/25 px-4 py-3 text-base font-medium"
         }
       >
-        <span className="font-heading text-lg">Share the house</span>
+        <span>Share the house</span>
         <ArrowRightIcon className="size-5 shrink-0" aria-hidden="true" />
       </Link>
     </div>

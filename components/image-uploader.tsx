@@ -6,7 +6,9 @@
  * `<input type="file" accept="image/*" multiple>` is the whole interaction: on
  * iOS and Android it opens the photo library directly. There is deliberately no
  * drag-and-drop zone — nobody drags a file on a phone, and the target for it
- * would only crowd out the button that matters.
+ * would only crowd out the button that matters. The `panel` variant looks like
+ * one and is not: it is the same button drawn large, for when there are no
+ * photos above it and a 44px row would be the only thing on the screen.
  *
  * ### How an upload goes
  *
@@ -56,6 +58,13 @@ export type ImageUploaderProps = {
   max: number;
   /** How many it holds right now, from the server. */
   count: number;
+  /**
+   * `"button"` is the row that sits under photos that already exist.
+   * `"panel"` is for when there are none: the same control drawn as the dashed
+   * box that would otherwise be an untappable "no photos yet" placeholder above
+   * it. Same input, same picker — one target instead of two shapes.
+   */
+  variant?: "button" | "panel";
   /** Called once per photo that lands. Revalidate from here. */
   onUploaded?: (image: UploadedImage) => void;
   className?: string;
@@ -215,6 +224,7 @@ export function ImageUploader({
   sectionId,
   max,
   count,
+  variant = "button",
   onUploaded,
   className,
 }: ImageUploaderProps) {
@@ -448,8 +458,10 @@ export function ImageUploader({
     : max === 1
       ? "Pick a photo from your camera roll."
       : used === 0
-        ? `Up to ${max} photos. Pick several at once — they upload one at a time.`
-        : `${used} of ${max} added. Pick several at once — they upload one at a time.`;
+        ? // What happens to a queue of them is visible in the queue itself, a
+          // moment later. It does not need saying up front.
+          `Up to ${max} photos, and you can pick several at once.`
+        : `${used} of ${max} added. Pick several at once.`;
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
@@ -469,17 +481,33 @@ export function ImageUploader({
         }}
       />
 
-      <Button
-        type="button"
-        variant="outline"
-        disabled={full}
-        aria-describedby={hintId}
-        onClick={() => inputRef.current?.click()}
-        className="h-11 w-full gap-2"
-      >
-        <ImagePlusIcon className="size-4" aria-hidden="true" />
-        {buttonLabel}
-      </Button>
+      {variant === "panel" ? (
+        <button
+          type="button"
+          disabled={full}
+          aria-describedby={hintId}
+          onClick={() => inputRef.current?.click()}
+          className="flex min-h-40 w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border px-6 py-10 text-center transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <ImagePlusIcon
+            className="size-5 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <span className="font-heading text-lg">{buttonLabel}</span>
+        </button>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          disabled={full}
+          aria-describedby={hintId}
+          onClick={() => inputRef.current?.click()}
+          className="h-11 w-full gap-2"
+        >
+          <ImagePlusIcon className="size-4" aria-hidden="true" />
+          {buttonLabel}
+        </Button>
+      )}
 
       <p id={hintId} className="text-xs text-muted-foreground">
         {hint}

@@ -16,8 +16,16 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
+/**
+ * Focus is a ring, never a fill.
+ *
+ * The sheet opens with focus already somewhere inside it, and a filled row is
+ * indistinguishable from a chosen one — so the menu opened with "Sign out", the
+ * only irreversible thing in it, looking as though the owner had already picked
+ * it. A ring says "your keyboard is here"; beige says "this one".
+ */
 const ROW =
-  "flex touch-target items-center rounded-lg px-3 text-sm transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none";
+  "flex touch-target items-center rounded-lg px-3 text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
 
 /**
  * The owner's menu. A bottom sheet rather than a dropdown: on a 390px screen a

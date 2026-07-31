@@ -98,40 +98,43 @@ export function SignInForm({ showDevNote }: { showDevNote: boolean }) {
 
   if (status === "sent") {
     return (
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-col gap-2">
-          <h1
-            ref={sentHeadingRef}
-            tabIndex={-1}
-            className="text-lg font-semibold tracking-tight outline-none"
-          >
-            Check your email
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            The sign-in link is on its way to{" "}
-            <span className="font-medium text-foreground break-all">
-              {sentTo}
-            </span>
-            . Open it on this phone and you&rsquo;re in. It works once and
-            expires in an hour.
-          </p>
-        </div>
-
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11 w-full"
-          onClick={() => {
-            setStatus("idle");
-            setError(null);
-            // Defer to after the form is back on screen.
-            requestAnimationFrame(() => inputRef.current?.focus());
-          }}
+      <div className="flex flex-1 flex-col">
+        <h1
+          ref={sentHeadingRef}
+          tabIndex={-1}
+          className="pt-14 text-2xl text-balance outline-none"
         >
-          Use a different email
-        </Button>
+          Check your email.
+        </h1>
+        <p className="pt-6 text-base text-pretty text-muted-foreground">
+          The sign-in link is on its way to{" "}
+          <span className="font-medium text-foreground break-all">{sentTo}</span>
+          . Open it on this phone and you&rsquo;re in. It works once and expires
+          in an hour.
+        </p>
 
-        {devNote}
+        {/* Bottom-anchored like the form it replaced, so the panel can swap
+            under the reader without the shape of the page changing. The way
+            out of here is opening the email, not this button — it is the
+            fallback for a typo, so it stays an outline and the eye is not
+            asked to treat it as the next step. */}
+        <div className="mt-auto flex flex-col gap-4 pt-12">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-12 w-full text-base"
+            onClick={() => {
+              setStatus("idle");
+              setError(null);
+              // Defer to after the form is back on screen.
+              requestAnimationFrame(() => inputRef.current?.focus());
+            }}
+          >
+            Use a different email
+          </Button>
+
+          {devNote}
+        </div>
       </div>
     );
   }
@@ -139,52 +142,70 @@ export function SignInForm({ showDevNote }: { showDevNote: boolean }) {
   const sending = status === "sending";
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-lg font-semibold tracking-tight">Sign in</h1>
-        <p className="text-sm text-muted-foreground">
-          Give us your email and we&rsquo;ll send a link that signs you in.
-          There&rsquo;s no password to remember.
-        </p>
-      </div>
+    <div className="flex flex-1 flex-col">
+      {/* "Sign in" was a label sitting where every other screen in this product
+          opens with something a person would actually say — and at
+          `text-lg font-semibold` it was a weight Fraunces is never asked for
+          anywhere else. */}
+      <h1 className="pt-14 text-2xl text-balance">Come in.</h1>
+      <p className="pt-6 text-base text-pretty text-muted-foreground">
+        Tell us where to send the link, and it will sign you in. There&rsquo;s
+        no password to remember.
+      </p>
 
-      <form noValidate onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor={emailId}>Email</Label>
-          <Input
-            id={emailId}
-            ref={inputRef}
-            type="email"
-            name="email"
-            value={email}
-            onChange={(event) => {
-              setEmail(event.target.value);
-              if (error) setError(null);
-            }}
-            placeholder="you@example.com"
-            autoComplete="email"
-            inputMode="email"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
+      {/* The one thing to do on this screen, held at the bottom of the glass:
+          the button lands under the same thumb that just pressed "Sign in" on
+          `/`, at the same distance from the same edge. */}
+      <div className="mt-auto flex flex-col gap-4 pt-12">
+        <form noValidate onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor={emailId}>Email</Label>
+            <Input
+              id={emailId}
+              ref={inputRef}
+              type="email"
+              name="email"
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                if (error) setError(null);
+              }}
+              placeholder="you@example.com"
+              autoComplete="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              disabled={sending}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? errorId : undefined}
+              className="h-11 text-base"
+            />
+            {error ? (
+              <p id={errorId} role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
+          </div>
+
+          <Button
+            type="submit"
             disabled={sending}
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? errorId : undefined}
-            className="h-11 text-base"
-          />
-          {error ? (
-            <p id={errorId} role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          ) : null}
-        </div>
+            className="h-12 w-full text-base"
+          >
+            {sending ? "Sending the link…" : "Email me a link"}
+          </Button>
+        </form>
 
-        <Button type="submit" disabled={sending} className="h-11 w-full">
-          {sending ? "Sending the link…" : "Email me a link"}
-        </Button>
-      </form>
+        {/* The `/` side of this pair carries a quiet grey line under its button
+            too. Here it answers the question that arrives a second after the
+            link does. */}
+        <p className="text-sm text-pretty text-muted-foreground">
+          The link works once, and only for an hour.
+        </p>
 
-      {devNote}
+        {devNote}
+      </div>
     </div>
   );
 }

@@ -1,22 +1,29 @@
 import type { ReactNode } from "react";
 
 /**
- * One narrow column, held at the top of the screen.
+ * One narrow column with the same silhouette as `/`: the name and the words at
+ * the top, the single action pushed down to where the thumb already is.
  *
- * It used to be vertically centred, which on a 390x844 phone put the email
- * field 53% of the way down the glass — and then the keyboard opened, the
- * viewport halved, and the whole panel jumped upward while somebody was
- * reaching for it. A sign-in screen has one field and one button; there is
- * nothing to centre and everything to keep still.
+ * It used to be `pt-8` and nothing else. On a 390x844 phone that ended the
+ * whole screen at about 380px and left ~460px of blank paper underneath it,
+ * with "Email me a link" stranded in the top third of the glass. The lesson
+ * from that, and the rule this file now keeps: empty paper *above* a
+ * bottom-anchored action is composition, empty paper *below* the last element
+ * is a page that failed to finish. So the column stretches and the children
+ * are free to claim the slack with `mt-auto`.
  *
- * The border is deliberately absent on a phone — a boxed card inside a 390px
- * viewport is just a second frame around the frame — and appears from `sm` up,
- * where the card has room to read as an object on the page.
+ * The stretch is a phone thing. From `sm` up the column goes back to its
+ * natural height (`sm:flex-none`) — a bordered card pulled down the full height
+ * of a desktop window is not a card — and with no free space left, `mt-auto`
+ * inside it quietly does nothing.
+ *
+ * The border is deliberately absent on a phone: a boxed card inside a 390px
+ * viewport is just a second frame around the frame.
  */
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-1 flex-col pt-8 pb-10 sm:pt-16">
-      <div className="mx-auto w-full max-w-sm sm:rounded-lg sm:border sm:border-border sm:p-6">
+    <div className="flex flex-1 flex-col pt-8 pb-8 sm:pt-16 sm:pb-16">
+      <div className="mx-auto flex w-full max-w-sm flex-1 flex-col sm:flex-none sm:rounded-lg sm:border sm:border-border sm:p-6">
         {children}
       </div>
     </div>

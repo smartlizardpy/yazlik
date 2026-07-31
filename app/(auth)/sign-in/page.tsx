@@ -8,19 +8,21 @@ export const metadata: Metadata = {
 
 export default function SignInPage() {
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-1 flex-col">
       {/*
-        The product's own name, on the one page that carries it. It was 15px of
-        grey — the quietest thing on its own front door — which left the screen
-        looking like a form some other site had embedded. It is a masthead, so
-        it gets the display face and the room to be one.
+        The product's own name, on the one page that carries it — set exactly as
+        it is on `/`, because a person taps through from there and the mark
+        should not change size on the way. It was `text-xl` here, which made the
+        masthead louder than the page's own heading: the shop sign shouting over
+        the thing written on the door.
       */}
-      <p className="font-heading text-xl">Yazlık</p>
+      <p className="font-heading text-lg">Yazlık</p>
 
       {/*
         The heading lives inside the client component: once the link is sent the
-        whole panel changes, heading included, rather than leaving "Sign in"
-        sitting above a confirmation.
+        whole panel changes, heading included, rather than leaving a stale one
+        sitting above a confirmation. It also owns the `flex-1` that lets the
+        form fall to the bottom of the layout's column.
 
         NODE_ENV is read here, on the server, and passed down — the page is the
         right place to know which environment it is running in.

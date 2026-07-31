@@ -19,7 +19,10 @@ export default async function OwnerLayout({
 
   return (
     <div className="flex flex-1 flex-col">
-      <header className="sticky top-0 z-20 -mx-4 flex items-center gap-2 border-b border-border bg-background/90 px-4 py-2 backdrop-blur">
+      {/* Opaque, not 90% and blurred. Warm paper at nine-tenths is not enough to
+          stop the black "Say yes" button reading through as a dark band across
+          the house's own name as the page scrolls under it. */}
+      <header className="sticky top-0 z-20 -mx-4 flex items-center gap-2 border-b border-border bg-background px-4 py-2">
         <Link
           href="/app"
           className="min-w-0 flex-1 truncate rounded-lg py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"

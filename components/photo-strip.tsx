@@ -203,11 +203,18 @@ export function PhotoStrip({
                 // 390px first: a tile is 78% of the strip, and the strip is the
                 // column, which stops growing at 560px.
                 sizes="(max-width: 640px) 80vw, 420px"
-                // The first photo is the one someone is waiting for; the rest
-                // are past the fold of a phone screen. `priority` is deprecated
-                // in Next 16 — `loading` and `fetchPriority` say it plainly.
+                // The first tile is on screen the moment the strip is, so it
+                // does not lazy-load; the rest are a swipe away. `priority` is
+                // deprecated in Next 16 — `loading` says this plainly.
+                //
+                // No `fetchPriority="high"` here, though it was here until the
+                // demo house had photographs in it to prove otherwise. A strip
+                // is never the first thing on a screen: on the invitation it
+                // sits below the hero, which is the one image someone is
+                // actually waiting for and the only one that gets to jump the
+                // queue. Two `high` images on mobile data means the hero
+                // arrives second.
                 loading={index === 0 ? "eager" : "lazy"}
-                fetchPriority={index === 0 ? "high" : undefined}
                 className={cn(
                   "object-cover transition-opacity",
                   (isRemoving || isConfirming) && "opacity-40",

@@ -31,6 +31,18 @@ export const metadata: Metadata = {
  * now one sentence each, because the distinction is a fact, not a lecture, and
  * a wall of caveats is how a person learns to skip the words on a screen.
  *
+ * ### One of them is the screen; the other is plumbing
+ *
+ * They were laid out as two matching sections — button, URL, sentence, twice —
+ * with a heading between them, which said they were worth the same. They are
+ * not. The house link is the reason this page exists, so it gets the top of the
+ * page and the only ink on it. The calendar feed is a thing an owner sets up
+ * once and never opens again, so it sits at the foot of the page behind a
+ * disclosure, in the same quiet row as the QR code.
+ *
+ * The sentence about what the feed gives away sits directly on top of "Replace
+ * this link" for the same reason a fire alarm hangs next to the extinguisher.
+ *
  * ### Where the URLs come from
  *
  * `NEXT_PUBLIC_APP_URL`, not the request's `Host` header — the same constant
@@ -65,11 +77,11 @@ export default async function SharePage() {
   const qr = encodeQr(guestUrl);
 
   return (
-    <div className="flex flex-1 flex-col gap-10 pt-5 pb-4">
+    <div className="flex flex-1 flex-col pt-5 pb-4">
       <h1 className="text-2xl text-balance">Share the house</h1>
 
       {/* The house link ----------------------------------------------------- */}
-      <section className="flex flex-col gap-4">
+      <section className="mt-8 flex flex-col gap-6">
         <ShareLink
           url={guestUrl}
           title={house.name}
@@ -82,13 +94,15 @@ export default async function SharePage() {
           primary
         />
 
-        <p className="text-base">
+        <p className="text-base text-pretty">
           Anyone with it can ask. Only you say yes.
         </p>
 
-        {/* Useful, occasionally, and never the reason anyone opened this. */}
+        {/* Useful, occasionally, and never the reason anyone opened this. Ink,
+            though: on paper with no accent hue, a grey control is a disabled
+            one, and this one is neither disabled nor hard to press. */}
         <details className="group">
-          <summary className="flex min-h-11 list-none items-center gap-1.5 text-sm text-muted-foreground [&::-webkit-details-marker]:hidden">
+          <summary className="flex min-h-11 list-none items-center gap-1.5 text-base [&::-webkit-details-marker]:hidden">
             <ChevronRightIcon
               className="size-4 transition-transform group-open:rotate-90"
               aria-hidden="true"
@@ -113,25 +127,42 @@ export default async function SharePage() {
       </section>
 
       {/* The calendar link -------------------------------------------------- */}
-      <section className="flex flex-col gap-4">
-        <h2 className="text-lg">Your calendar</h2>
+      {/* At the foot of the page, under a hairline, behind a door. Set up once,
+          never opened again — and until it is opened, the sentence about what
+          it gives away is not a sentence anyone has to read. */}
+      <div className="mt-auto pt-12">
+        <details className="group border-t border-border pt-1">
+          <summary className="flex min-h-11 list-none items-center gap-1.5 text-base [&::-webkit-details-marker]:hidden">
+            <ChevronRightIcon
+              className="size-4 transition-transform group-open:rotate-90"
+              aria-hidden="true"
+            />
+            Your calendar
+          </summary>
 
-        <FeedLink
-          baseUrl={APP_URL}
-          feedToken={house.feedToken}
-          houseName={house.name}
-        >
-          <div className="flex flex-col gap-2">
-            <p className="text-base">
-              Anyone with this one can see who is staying and when.
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Calendars refresh on their own schedule. A stay you said yes to a
-              minute ago can take a few hours to appear.
-            </p>
+          <div className="pt-2 pb-1">
+            <FeedLink
+              baseUrl={APP_URL}
+              feedToken={house.feedToken}
+              houseName={house.name}
+            >
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-muted-foreground text-pretty">
+                  Calendars refresh on their own schedule. A stay you said yes
+                  to a minute ago can take a few hours to appear.
+                </p>
+                {/* The consequence, in the voice this product uses for things
+                    that are true rather than things you operate — and sitting
+                    directly on top of the way to undo it. */}
+                <p className="font-heading text-base text-pretty">
+                  Whoever has this link sees every stay — who is coming, and
+                  which nights.
+                </p>
+              </div>
+            </FeedLink>
           </div>
-        </FeedLink>
-      </section>
+        </details>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,12 @@
  * up top, the promise at the top third in the display face, and the one action
  * down where a thumb already is. The paper between them is the page's shape,
  * not a gap left by nothing being there.
+ *
+ * The promise is now set at the top of the scale, 48px, which is the only place
+ * in the product that asks for it. That is not decoration: at 40px the sentence
+ * ran three lines and left ~330px of paper between it and the button — a third
+ * of the screen doing nothing, which reads as unfinished rather than composed.
+ * A poster is what fills a page with four elements on it.
  */
 
 import Link from "next/link";
@@ -22,7 +28,7 @@ export default function Home() {
     <section className="flex flex-1 flex-col pt-8 pb-8">
       <p className="font-heading text-lg">Yazlık</p>
 
-      <h1 className="pt-14 text-3xl text-balance">
+      <h1 className="pt-14 text-4xl text-balance">
         A house in the family, and one link that lets people in.
       </h1>
 
@@ -31,7 +37,12 @@ export default function Home() {
         that week — and no money changes hands anywhere in it.
       </p>
 
-      <div className="mt-auto flex flex-col gap-4 pt-16">
+      {/* `pt-16` here was a fiction: with `mt-auto` above it the block is
+          already pinned to the bottom, so the padding only ever pushed the
+          auto-margin around and never moved the button. `pt-12` is the honest
+          number — the minimum gap that survives when the screen is short
+          enough for the slack to run out, and the same one `/sign-in` uses. */}
+      <div className="mt-auto flex flex-col gap-4 pt-12">
         <Link
           href="/sign-in"
           className="flex min-h-14 items-center justify-center rounded-xl bg-primary px-4 text-base text-primary-foreground transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"

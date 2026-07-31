@@ -20,10 +20,16 @@ import { Textarea } from "@/components/ui/textarea";
  * Everything about the house an owner can change, on one screen.
  *
  * Three groups, in the order someone actually thinks about them: what the house
- * is, what a request has to satisfy, and how much a stranger holding the link
- * gets to see. Every rule explains itself in a muted line under the field —
- * "gap days" means nothing to a person who has never thought about a
- * changeover, and a tooltip on a phone is a control nobody finds.
+ * is, what you will say yes to, and how much a stranger holding the link gets
+ * to see. The four counts explain themselves once, above all of them, rather
+ * than four times underneath: a row that reads "Shortest stay · 2 · nights" has
+ * already said what it means, and four hints stacked under four spinners is a
+ * control panel. The one exception is a gap of zero — the single value whose
+ * meaning is not on its face — so that line appears only when it is zero.
+ *
+ * The save bar is mounted by a change, not by the screen. At rest there is
+ * nothing to save, and a permanent bar offering it both lies and covers the
+ * last line of the form.
  *
  * Values live in React state rather than the DOM. React resets an uncontrolled
  * form once its action settles, and someone who mistyped one number should not
@@ -84,6 +90,27 @@ type FieldName = TextField | "showGuestNames";
 /** Digits only — a count field should never be able to hold "2 nights". */
 function digits(value: string) {
   return value.replace(/\D/g, "");
+}
+
+/**
+ * The house as the form holds it: strings, because that is what an input has.
+ * Called twice — once to seed the state, once per render as the baseline the
+ * save bar compares against — so the two can never describe different fields.
+ */
+function toValues(house: HouseSettings): Record<TextField, string> {
+  return {
+    name: house.name,
+    town: house.town,
+    country: house.country,
+    language: house.language,
+    blurb: house.blurb ?? "",
+    minNights: String(house.minNights),
+    maxNights: String(house.maxNights),
+    gapDays: String(house.gapDays),
+    maxGuests: String(house.maxGuests),
+    bookableFrom: house.bookableFrom ?? "",
+    bookableTo: house.bookableTo ?? "",
+  };
 }
 
 /**
@@ -159,7 +186,8 @@ function CountField({
   name: CountName;
   label: string;
   unit: string;
-  hint: string;
+  /** Only where the number does not speak for itself. Usually absent. */
+  hint?: string;
   value: string;
   error: string | null;
   disabled: boolean;
@@ -197,19 +225,9 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
     null,
   );
 
-  const [values, setValues] = useState<Record<TextField, string>>(() => ({
-    name: house.name,
-    town: house.town,
-    country: house.country,
-    language: house.language,
-    blurb: house.blurb ?? "",
-    minNights: String(house.minNights),
-    maxNights: String(house.maxNights),
-    gapDays: String(house.gapDays),
-    maxGuests: String(house.maxGuests),
-    bookableFrom: house.bookableFrom ?? "",
-    bookableTo: house.bookableTo ?? "",
-  }));
+  const [values, setValues] = useState<Record<TextField, string>>(() =>
+    toValues(house),
+  );
   const [showGuestNames, setShowGuestNames] = useState(house.showGuestNames);
 
   // An error stands until the person starts fixing it. Holding the dismissed
@@ -240,6 +258,16 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
   const failed = state && !state.ok && dismissed !== state ? state : null;
   const formError = failed && !failed.field ? failed.error : null;
 
+  // What is on screen against what is stored. A saved change revalidates
+  // `/app`, so the house arrives back equal to the form and the bar leaves on
+  // its own — no flag to reset and nothing to keep in step.
+  const saved = toValues(house);
+  const changed =
+    showGuestNames !== house.showGuestNames ||
+    (Object.keys(saved) as TextField[]).some(
+      (field) => values[field] !== saved[field],
+    );
+
   function errorFor(field: FieldName) {
     return failed?.field === field ? failed.error : null;
   }
@@ -268,6 +296,12 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
   const blurbHint =
     "A few lines about the house — what it is like, what is nearby. Optional.";
 
+  // "0 days" reads as no rule at all, which is the one thing it is not.
+  const gapHint =
+    values.gapDays === "0"
+      ? "Someone can arrive the same day the last person leaves."
+      : undefined;
+
   const privacyError = errorFor("showGuestNames");
 
   // Only ever "en" or "tr" — it starts from the row and only changes through
@@ -281,7 +315,10 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
 
       {/* The house ---------------------------------------------------------- */}
       <section aria-labelledby={houseGroupId} className="flex flex-col gap-5">
-        <h2 id={houseGroupId} className="text-sm font-medium">
+        {/* 22px Fraunces, the size a section heading is everywhere else in the
+            product. At `text-sm font-medium` it was smaller than the fields it
+            was introducing, which made it read as a caption about itself. */}
+        <h2 id={houseGroupId} className="text-lg">
           The house
         </h2>
 
@@ -419,15 +456,15 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
         </Field>
       </section>
 
-      {/* Booking rules ------------------------------------------------------ */}
+      {/* What you'll say yes to --------------------------------------------- */}
       <section aria-labelledby={rulesGroupId} className="flex flex-col gap-5">
         <div className="flex flex-col gap-1">
-          <h2 id={rulesGroupId} className="text-sm font-medium">
-            Booking rules
+          <h2 id={rulesGroupId} className="text-lg">
+            What you&rsquo;ll say yes to
           </h2>
-          <p className="text-xs text-muted-foreground">
-            What a request has to meet before it reaches you. Anything outside
-            these is turned away on the form, so you never have to say no to it.
+          <p className="text-sm text-muted-foreground">
+            Nobody can ask for anything outside these, so you are never the one
+            saying no.
           </p>
         </div>
 
@@ -436,7 +473,6 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
           name="minNights"
           label="Shortest stay"
           unit="nights"
-          hint="Nobody can ask for fewer nights than this."
           value={values.minNights}
           error={errorFor("minNights")}
           disabled={pending}
@@ -448,7 +484,6 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
           name="maxNights"
           label="Longest stay"
           unit="nights"
-          hint="Nobody can ask for more nights than this in one request."
           value={values.maxNights}
           error={errorFor("maxNights")}
           disabled={pending}
@@ -460,7 +495,10 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
           name="gapDays"
           label="Gap between stays"
           unit="days"
-          hint="Empty days you keep between one guest leaving and the next arriving. 0 lets someone arrive the day the last guest leaves."
+          // Every other row means what it says. Zero does not — it looks like
+          // "no rule" and is in fact a decision about the changeover day — so
+          // this is the one line that stays, and only while it is zero.
+          hint={gapHint}
           value={values.gapDays}
           error={errorFor("gapDays")}
           disabled={pending}
@@ -470,9 +508,8 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
         <CountField
           id={idFor("maxGuests")}
           name="maxGuests"
-          label="Most guests"
+          label="Room for"
           unit="people"
-          hint="The largest group the house sleeps."
           value={values.maxGuests}
           error={errorFor("maxGuests")}
           disabled={pending}
@@ -537,8 +574,8 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
       </section>
 
       {/* Privacy ------------------------------------------------------------ */}
-      <section aria-labelledby={privacyGroupId} className="flex flex-col gap-3">
-        <h2 id={privacyGroupId} className="text-sm font-medium">
+      <section aria-labelledby={privacyGroupId} className="flex flex-col gap-4">
+        <h2 id={privacyGroupId} className="text-lg">
           Privacy
         </h2>
 
@@ -592,17 +629,24 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
         </div>
       </section>
 
-      {/* Save --------------------------------------------------------------- */}
-      <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-border bg-background/90 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
-        {formError ? (
-          <p role="alert" className="text-xs text-destructive">
-            {formError}
-          </p>
-        ) : null}
-        <Button type="submit" disabled={pending} className="h-11 w-full">
-          {pending ? "Saving…" : "Save changes"}
-        </Button>
-      </div>
+      {/* Save ---------------------------------------------------------------
+          Only once there is something to save. It is opaque, not
+          `bg-background/90 backdrop-blur`: a translucent bar that is always
+          there leaves the last line of the form legible *through* the button,
+          which reads as a rendering fault rather than as depth. Kept mounted
+          while a save is in flight, and while an error from it is unread. */}
+      {changed || pending || formError ? (
+        <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-border bg-background px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          {formError ? (
+            <p role="alert" className="text-xs text-destructive">
+              {formError}
+            </p>
+          ) : null}
+          <Button type="submit" disabled={pending} className="h-11 w-full">
+            {pending ? "Saving…" : "Save changes"}
+          </Button>
+        </div>
+      ) : null}
     </form>
   );
 }

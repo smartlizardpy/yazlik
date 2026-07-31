@@ -39,9 +39,28 @@
  *
  * Free is plain, taken is a filled neutral struck through, pending is a dashed
  * outline, and your selection is solid black. Four states, four different
- * *shapes*, so the calendar survives greyscale and colourblindness with no
- * legend. shadcn's calendar paints the selection with the blue accent — that is
- * overridden below and must stay overridden.
+ * *shapes*, so the calendar survives greyscale and colourblindness. shadcn's
+ * calendar paints the selection with the blue accent — that is overridden below
+ * and must stay overridden.
+ *
+ * ### A run of nights is one shape
+ *
+ * Five nights somebody has asked for are not five events, they are one week
+ * somebody asked about, and the grid has to say so. Every cell used to carry
+ * its own rounded outline, which drew 18, 19, 20, 21 and 22 as five separate
+ * dashed boxes with stray dashes between them — a rendering fault, not a
+ * sentence. So the two bands are drawn from run **edges**: the first and last
+ * night of a stretch get the rounding and the closing dash, everything between
+ * them is square, and adjacent cells sit flush, so a run reads as one
+ * continuous band however long it is.
+ *
+ * ### `explain`
+ *
+ * Off by default, because the owner blocking their own dates does not need the
+ * grid explained to them. On, for the guest, it adds two things: a one-line key
+ * under the grid naming the marks that are actually on it, and a hollow ink
+ * square on the morning you leave — the day the footer names but the grid, which
+ * only ever fills *nights*, would otherwise leave blank.
  */
 
 import { useCallback, useMemo } from "react";
@@ -104,6 +123,13 @@ export type StayCalendarProps = {
   max?: DateStr | null;
   value: StayRange | null;
   onChange: (next: StayRange | null) => void;
+  /**
+   * Explain the grid to someone who has never seen it: a one-line key under it
+   * naming the marks it is actually showing, and the morning you leave drawn as
+   * a hollow square at the end of the band. Guest-facing screens want this; the
+   * owner blocking their own dates does not.
+   */
+  explain?: boolean;
   /** The house's language. Picks the month and weekday names, and the copy. */
   language?: Lang;
   className?: string;
@@ -143,9 +169,24 @@ const MODIFIER_CLASS_NAMES = {
   // contrast than the number it crosses out, so "gone" reads before "12th".
   taken:
     "bg-taken [&>button]:line-through [&>button]:decoration-2 [&>button]:decoration-foreground/50",
-  // Pending: a dashed outline and nothing else. Still tappable, so it must not
-  // read as heavier than a free night.
-  pending: "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground",
+  // The fill is continuous because the cells are flush; only the two ends of
+  // the run are rounded, which is why the base cell carries no radius.
+  takenStart: "rounded-l-(--cell-radius)",
+  takenEnd: "rounded-r-(--cell-radius)",
+  // Pending: a dashed rule along the top and bottom of every night in the run,
+  // closed off at the two ends. Drawn on a pseudo-element rather than the cell
+  // itself so it costs no layout — a real border would shrink the cell by 4px
+  // and push the 44px button out of it. Still tappable, so it stays lighter
+  // than a free night's number: nobody should read "asked for" as "gone".
+  pending:
+    "before:pointer-events-none before:absolute before:inset-0 before:border-y-2 before:border-dashed before:border-muted-foreground/55",
+  pendingStart: "before:rounded-l-(--cell-radius) before:border-l-2",
+  pendingEnd: "before:rounded-r-(--cell-radius) before:border-r-2",
+  // The morning you leave. Not a night, so it is never filled — the same square
+  // as the band next to it, drawn hollow. `outline` rather than `border` for
+  // the same reason as above, and inset so it cannot spill into its neighbours.
+  leaving:
+    "rounded-(--cell-radius) outline-2 outline-foreground -outline-offset-2",
 } satisfies Record<string, string>;
 
 const CALENDAR_CLASS_NAMES = {
@@ -169,6 +210,17 @@ const CALENDAR_CLASS_NAMES = {
   // month came to 354px of mostly air, so half a season needed scrolling.
   // 44px flush rows give back 90px — most of a sixth week.
   week: "flex w-full [&>td]:aspect-auto [&>td]:h-(--cell-size)",
+  // No radius on the cell itself. shadcn rounds every day, which turned a
+  // six-night taken band into six rounded tiles with notches between them and
+  // the pending week into five dashed boxes. The rounding belongs to the *run*,
+  // so it is applied by the run-edge modifiers above and nowhere else. The two
+  // child rules are shadcn's own and stay: they round a selection where it
+  // meets the edge of a week rather than leaving it cut off mid-row.
+  day: [
+    "group/day relative h-full w-full p-0 text-center select-none",
+    "[&:first-child[data-selected=true]_button]:rounded-l-(--cell-radius)",
+    "[&:last-child[data-selected=true]_button]:rounded-r-(--cell-radius)",
+  ].join(" "),
   // shadcn marks today with `bg-muted`, which is a competing fill. A dot under
   // the number instead: a different shape, not another wash of grey.
   today:
@@ -377,6 +429,7 @@ export function StayCalendar({
   max = null,
   value,
   onChange,
+  explain = false,
   language = DEFAULT_LANG,
   className,
 }: StayCalendarProps) {
@@ -410,13 +463,35 @@ export function StayCalendar({
     return matchers;
   }, [min, lastNight, disabledDates]);
 
-  const modifiers = useMemo(
-    () => ({
+  // The check-out day, and only when there is a real stay to leave from. It is
+  // the one square the footer names that the grid would otherwise leave blank,
+  // which is how "Tue 11 – Sat 15 Aug" ended up sitting under a grid with
+  // nothing on the 15th.
+  const leavingDay = explain && chosenLastNight != null ? value?.end : null;
+
+  const modifiers = useMemo(() => {
+    // A night is the start of a run when the night before it is not in the same
+    // set; the end, when the night after it is not. That is the whole of it —
+    // week boundaries need no special case, because a run that carries over a
+    // Sunday simply has no closing dash there and picks up again on the Monday.
+    const startsRun = (nights: ReadonlySet<DateStr>) => (date: Date) => {
+      const night = toStr(date);
+      return nights.has(night) && !nights.has(addDaysStr(night, -1));
+    };
+    const endsRun = (nights: ReadonlySet<DateStr>) => (date: Date) => {
+      const night = toStr(date);
+      return nights.has(night) && !nights.has(addDaysStr(night, 1));
+    };
+    return {
       taken: (date: Date) => disabledDates.has(toStr(date)),
+      takenStart: startsRun(disabledDates),
+      takenEnd: endsRun(disabledDates),
       pending: (date: Date) => pendingDates.has(toStr(date)),
-    }),
-    [disabledDates, pendingDates],
-  );
+      pendingStart: startsRun(pendingDates),
+      pendingEnd: endsRun(pendingDates),
+      leaving: (date: Date) => leavingDay != null && toStr(date) === leavingDay,
+    };
+  }, [disabledDates, pendingDates, leavingDay]);
 
   // Say out loud what the fills say visually. Delegates to the locale's own
   // label so the Turkish calendar keeps its Turkish aria labels.
@@ -439,6 +514,8 @@ export function StayCalendar({
         if (dayModifiers.taken) return `${base}, ${t("house.legend.taken", language)}`;
         if (dayModifiers.pending)
           return `${base}, ${t("house.legend.pending", language)}`;
+        if (dayModifiers.leaving)
+          return `${base}, ${t("house.legend.leaving", language)}`;
         return base;
       },
     }),
@@ -464,19 +541,19 @@ export function StayCalendar({
   // nights — which is a database row with a border on it. A chosen stay is one
   // thing, so it is said as one line, in the display face, in the words a
   // person would use out loud: "Tue 18 – Sun 23 Aug · 5 nights".
-  let footer;
+  let footerLine;
   if (!value) {
-    footer = (
+    footerLine = (
       <p className="text-sm text-muted-foreground">{t("calendar.empty", language)}</p>
     );
   } else if (value.end == null || chosenLastNight == null) {
-    footer = (
+    footerLine = (
       <p className="text-sm text-muted-foreground">
         {t("calendar.picking", language, { day: humanDay(value.start, language) })}
       </p>
     );
   } else {
-    footer = (
+    footerLine = (
       <div className="flex w-full flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="num font-heading text-lg">
           {humanRange(value.start, value.end, language)}
@@ -487,6 +564,67 @@ export function StayCalendar({
       </div>
     );
   }
+
+  // The key to the grid — and only ever to the marks that are on it. A house
+  // with nothing taken and nobody waiting shows a grid of plain numbers, and a
+  // key explaining marks it is not showing is furniture. There has to be
+  // something to explain before it appears at all, which is what `length > 1`
+  // is asking: the ink square alone explains nothing.
+  const marks: { key: string; label: string; swatch: string }[] = [];
+  if (explain) {
+    if (disabledDates.size > 0) {
+      marks.push({
+        key: "taken",
+        label: t("house.legend.taken", language),
+        swatch:
+          "relative bg-taken after:absolute after:inset-x-0 after:top-1/2 after:h-0.5 after:-translate-y-1/2 after:bg-foreground/50",
+      });
+    }
+    if (pendingDates.size > 0) {
+      marks.push({
+        key: "pending",
+        label: t("house.legend.pending", language),
+        swatch: "border-2 border-dashed border-muted-foreground/55",
+      });
+    }
+    // Only one of these two, ever. Before a stay is picked the ink square says
+    // what picking one will look like; once it is picked the line above the key
+    // has already named it, and the only mark left unexplained is the hollow
+    // square on the morning you leave.
+    marks.push(
+      leavingDay != null
+        ? {
+            key: "leaving",
+            label: t("house.legend.leaving", language),
+            swatch: "border-2 border-foreground",
+          }
+        : {
+            key: "selected",
+            label: t("house.legend.selected", language),
+            swatch: "bg-foreground",
+          },
+    );
+  }
+
+  // `aria-hidden`, and deliberately. Every day button already says which of
+  // these it is in its own accessible name, so a reader that also read the key
+  // would hear the whole thing again on every tap — the footer is a polite live
+  // region. This is the same information, drawn, for the eye that cannot ask a
+  // cell what it means.
+  const legend =
+    marks.length > 1 ? (
+      <ul
+        aria-hidden="true"
+        className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground"
+      >
+        {marks.map((mark) => (
+          <li key={mark.key} className="flex items-center gap-2">
+            <span className={cn("size-3.5 shrink-0 rounded-sm", mark.swatch)} />
+            {mark.label}
+          </li>
+        ))}
+      </ul>
+    ) : null;
 
   return (
     <div
@@ -515,7 +653,12 @@ export function StayCalendar({
         // Not `min`: see openingNight. A month you cannot book is not a
         // month worth opening on.
         defaultMonth={openMonth}
-        footer={footer}
+        footer={
+          <>
+            {footerLine}
+            {legend}
+          </>
+        }
         // 44px: the floor for a touch target, and it sizes the previous and
         // next buttons as well as the day cells.
         className="w-full p-0 [--cell-size:--spacing(11)]"

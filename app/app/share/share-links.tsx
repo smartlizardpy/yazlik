@@ -40,6 +40,18 @@
  * bordered grey well, though: that is developer chrome, and this screen is for
  * sending a link to your mother.
  *
+ * ### The link is the artifact, so it goes first and it is legible
+ *
+ * It used to be 13px grey tucked *under* the black button, which made the
+ * caption about the link larger than the link. On the one that matters it now
+ * sits above the button, with the origin small and quiet and the house's own
+ * slug in the display face — a name, set the way this product sets names. A
+ * long-press still takes the whole thing: both spans live in one `<p>` and the
+ * selection is of its contents, not of a span.
+ *
+ * The feed's URL keeps the quiet single-line treatment. Its last segment is a
+ * random token; setting that in a serif would be a joke.
+ *
  * ### The feedback is on the button, not in a toast
  *
  * A toast for "Copied" lands at the edge of the screen, away from the thumb
@@ -145,6 +157,16 @@ async function writeToClipboard(text: string): Promise<boolean> {
   }
 }
 
+/**
+ * Split a URL at its last slash: the part nobody reads, and the part that is a
+ * name. `https://yazlik.app/h/cesme-evi` → `https://yazlik.app/h/` + `cesme-evi`.
+ */
+function splitAtLastSlash(url: string): [string, string] {
+  const cut = url.lastIndexOf("/");
+  if (cut < 0 || cut === url.length - 1) return [url, ""];
+  return [url.slice(0, cut + 1), url.slice(cut + 1)];
+}
+
 /** Tier three: put the link in the browser's selection so a long-press can take it. */
 function selectElement(element: HTMLElement | null): void {
   if (!element) return;
@@ -172,7 +194,9 @@ export type ShareLinkProps = {
   copyLabel: string;
   /**
    * `true` on the one link that is the point of the screen. Exactly one per
-   * screen carries the ink; everything else is an outline.
+   * screen carries the ink; everything else is an outline. It also decides how
+   * loudly the URL itself is set — the link that is the point of the screen is
+   * read, and the one that is plumbing is not.
    */
   primary?: boolean;
 };
@@ -232,45 +256,59 @@ export function ShareLink({
     });
   }, [copy, message, title, url]);
 
-  return (
-    <div className="flex flex-col gap-1">
-      <Button
-        type="button"
-        variant={primary ? "default" : "outline"}
-        onClick={canSend ? send : () => void copy()}
-        className="h-12 w-full text-base"
-      >
-        {state === "copied" ? (
-          <CheckIcon className="size-4" aria-hidden="true" />
-        ) : null}
-        {state === "copied" ? "Copied" : canSend ? sendLabel : copyLabel}
-      </Button>
+  const [origin, name] = splitAtLastSlash(url);
 
-      {/* Only when the sheet took the top slot. On a laptop the button above is
-          already the copy button and this would be the same thing twice. */}
-      {canSend ? (
+  return (
+    <div className="flex flex-col gap-3">
+      {/* The link itself, above the button that hands it over, and selectable,
+          because tier three of the clipboard fallback is a long-press on
+          exactly this text. */}
+      {primary ? (
+        <p ref={textRef} className="font-heading text-lg break-all select-all">
+          <span className="font-sans text-sm text-muted-foreground">
+            {origin}
+          </span>
+          {name}
+        </p>
+      ) : (
+        <p
+          ref={textRef}
+          className="text-sm break-all text-muted-foreground select-all"
+        >
+          {url}
+        </p>
+      )}
+
+      <div className="flex flex-col gap-1">
         <Button
           type="button"
-          variant="ghost"
-          onClick={() => void copy()}
-          className="h-11 w-full text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+          variant={primary ? "default" : "outline"}
+          onClick={canSend ? send : () => void copy()}
+          className="h-12 w-full text-base"
         >
-          {state === "copied" ? "Copied" : "Copy it instead"}
+          {state === "copied" ? (
+            <CheckIcon className="size-4" aria-hidden="true" />
+          ) : null}
+          {state === "copied" ? "Copied" : canSend ? sendLabel : copyLabel}
         </Button>
-      ) : null}
 
-      {/* The link itself: quiet, plain, and selectable, because tier three of
-          the clipboard fallback is a long-press on exactly this text. */}
-      <p
-        ref={textRef}
-        className="mt-1 text-xs break-all text-muted-foreground select-all"
-      >
-        {url}
-      </p>
+        {/* Only when the sheet took the top slot. On a laptop the button above
+            is already the copy button and this would be the same thing twice. */}
+        {canSend ? (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => void copy()}
+            className="h-11 w-full text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+          >
+            {state === "copied" ? "Copied" : "Copy it instead"}
+          </Button>
+        ) : null}
+      </div>
 
       {/* One region, always in the tree, so a screen reader announces the change
           instead of the arrival of a new element. */}
-      <p aria-live="polite" className={state === "failed" ? "text-xs" : "sr-only"}>
+      <p aria-live="polite" className={state === "failed" ? "text-sm" : "sr-only"}>
         {state === "copied"
           ? "Copied to the clipboard."
           : state === "failed"
@@ -293,7 +331,8 @@ export type FeedLinkProps = {
   houseName: string;
   /**
    * What this link does, in the caller's words. It sits between the link and
-   * the way to replace it, so the escape hatch stays last and stays quiet.
+   * the way to replace it — deliberately, so the sentence about what the link
+   * gives away and the way to take it back read as one thing.
    */
   children?: React.ReactNode;
 };
@@ -355,6 +394,8 @@ export function FeedLink({
 
       {children}
 
+      {/* Ink, not grey. It is the answer to the sentence directly above it, and
+          a remedy printed quieter than the consequence is not offered. */}
       <Button
         type="button"
         variant="ghost"
@@ -364,7 +405,7 @@ export function FeedLink({
         }}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="h-11 justify-start self-start px-0 text-sm font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
+        className="-mt-1 h-11 justify-start self-start px-0 text-base font-normal underline underline-offset-4 hover:bg-transparent"
       >
         Replace this link
       </Button>

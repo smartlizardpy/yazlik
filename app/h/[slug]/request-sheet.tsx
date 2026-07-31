@@ -1,28 +1,39 @@
 "use client";
 
 /**
- * Asking for a week, as four questions instead of one form.
+ * Asking for a week: the month on the page, then three questions in a sheet.
  *
  * A cousin opening this link is not filling in a booking form, they are asking
- * a favour of someone they know. So the sheet asks what a host would ask, one
- * thing at a time, in the order a person would say it out loud:
+ * a favour of someone they know. So it asks what a host would ask, one thing at
+ * a time, in the order a person would say it out loud:
  *
- *   1. When would you like to come?          — the calendar
- *   2. Who's coming?                          — a name and how many of you
- *   3. Anything the owner should know?        — the note, and where to reply
- *   4. Does this look right?                  — the ask, written out
+ *   When would you like to come?              — the calendar, on the page
+ *   1. Who's coming?                          — a name and how many of you
+ *   2. Anything the owner should know?        — the note, and where to reply
+ *   3. Does this look right?                  — the ask, written out
  *
- * Four screens, dots at the top, Back and Next at the bottom. The last button
- * says "Ask for these dates", because that is what pressing it does.
+ * ### The page answers the first question, so the sheet does not ask it again
  *
- * ### Next is never dead
+ * The sheet used to open on the same August grid that was already on the page,
+ * at the same size, in the same place. Tapping "Ask to stay" therefore looked
+ * like nothing happening — the loudest possible way for a flow to lose someone
+ * on its first screen. There is one grid now and it lives on the invitation,
+ * where it is also doing the other job a guest opens this link for: is August
+ * free? "Ask to stay" is the hinge, and it opens on the first thing the page
+ * cannot know, which is who you are.
  *
- * A disabled primary button on a phone reads as a broken page — the thing it
- * wants is usually off-screen and it never says what. So Next is always ink and
- * always tappable; a step that is not finished answers with a sentence saying
- * what is missing and puts the caret in the field that is missing it. Checking
- * happens per step, which is the point of steps: nobody should reach the end and
- * be sent back.
+ * Nothing is picked and the button is still ink and still live — a dead primary
+ * on a phone reads as a broken page. It answers instead: one line above it
+ * saying to choose the nights first, and the grid scrolled back under the
+ * thumb.
+ *
+ * ### Red means refused
+ *
+ * `--destructive` is for a refusal, and the only thing that can refuse a
+ * request is the server. A field the guest has simply not filled in yet is not
+ * a refusal: it says what is missing in ink, in the same sentence, and puts the
+ * caret there. Nobody should meet a red ring before they have typed a
+ * character.
  *
  * ### Three places dates are checked, one function
  *
@@ -30,12 +41,15 @@
  * 2. `checkRequest` runs here, on every selection, so "stays here are 2 nights
  *    or more" arrives while the calendar is still on screen.
  * 3. `requestBooking` runs it again on the server, which is the answer that
- *    counts. The client cannot be trusted and is not.
+ *    counts. The client cannot be trusted and is not. When the server is the
+ *    one to refuse the dates there is no step to walk back to, so the sheet
+ *    closes and the refusal lands on the page, next to the grid that has to fix
+ *    it.
  *
- * Step 2 passes `busy: []` deliberately. Overlap and gap days are already in
- * `disabledDates`, which the grid enforces by construction, and shipping every
- * busy range to the client to re-derive them would hand a guest the shape of
- * everyone else's stays for nothing.
+ * The check here passes `busy: []` deliberately. Overlap and gap days are
+ * already in `disabledDates`, which the grid enforces by construction, and
+ * shipping every busy range to the client to re-derive them would hand a guest
+ * the shape of everyone else's stays for nothing.
  *
  * ### Where the values live
  *
@@ -76,6 +90,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { checkRequest, type HouseRules } from "@/lib/availability";
 import { nightsBetween, type DateStr } from "@/lib/dates";
 import { failureMessage, humanRange, t, tn, type Lang } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 
 /* ============================================================
    TYPES
@@ -105,11 +120,10 @@ export type RequestSheetProps = {
    STEPS
    ============================================================ */
 
-const WHEN = 0;
-const WHO = 1;
-const SAY = 2;
-const CHECK = 3;
-const TOTAL_STEPS = 4;
+const WHO = 0;
+const SAY = 1;
+const CHECK = 2;
+const TOTAL_STEPS = 3;
 
 /**
  * Which screen owns each `field` the Server Action can blame.
@@ -120,13 +134,17 @@ const TOTAL_STEPS = 4;
  * line on a screen that has nothing to do with it.
  */
 const STEP_OF_FIELD: Record<string, number> = {
-  startDate: WHEN,
-  endDate: WHEN,
   guestName: WHO,
   guests: WHO,
   guestEmail: SAY,
   note: SAY,
 };
+
+/**
+ * The two fields no step in the sheet owns. The calendar is on the page, so a
+ * refusal about dates closes the sheet and is said next to the grid.
+ */
+const DATE_FIELDS = new Set(["startDate", "endDate"]);
 
 /**
  * Enough to catch a typo, and nothing more. `zod`'s `z.email()` on the server is
@@ -168,8 +186,11 @@ export function RequestSheet({
 
   const [range, setRange] = useState<StayRange | null>(null);
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState(WHEN);
+  const [step, setStep] = useState(WHO);
   const [stepProblem, setStepProblem] = useState<StepProblem | null>(null);
+  // Set only by tapping "Ask to stay" with no nights chosen. It is the flow's
+  // answer to a tap it cannot act on, and it clears the moment the grid moves.
+  const [needsNights, setNeedsNights] = useState(false);
 
   // Controlled, because React resets an uncontrolled form once its action
   // settles — and someone who mistyped their email should not lose their note
@@ -191,10 +212,15 @@ export function RequestSheet({
     // night can go while somebody is typing their name. When it does, walk
     // back to the screen that owns the field it blamed, here, in the same
     // update that stores the refusal. Doing it afterwards in an effect would
-    // render the red line once on the wrong screen first.
+    // render the red line once on the wrong screen first. A refusal about the
+    // dates belongs to no screen in here: close, and let the page say it.
     if (!result.ok && result.field !== undefined) {
-      const target = STEP_OF_FIELD[result.field];
-      if (target !== undefined) setStep(target);
+      if (DATE_FIELDS.has(result.field)) {
+        setOpen(false);
+      } else {
+        const target = STEP_OF_FIELD[result.field];
+        if (target !== undefined) setStep(target);
+      }
     }
     return result;
   }, null);
@@ -215,15 +241,44 @@ export function RequestSheet({
   const idFor = useCallback((field: string) => `${baseId}-${field}`, [baseId]);
 
   /**
-   * The one line under a control, whoever objected.
+   * The one line under a control, whoever objected — and in what voice.
    *
-   * The server's refusal and this step's own refusal land in the same slot, so
-   * a control never grows two red sentences and there is never a question about
-   * which one is current.
+   * The server's refusal and this step's own "not yet" land in the same slot,
+   * so a control never grows two sentences and there is never a question about
+   * which one is current. `refused` is what separates them: the server saying
+   * no is the only thing in the guest's half of this product allowed to be red.
    */
-  const messageFor = (field: string) =>
-    (failed?.field === field ? failed.error : null) ??
-    (stepProblem?.field === field ? stepProblem.message : null);
+  const noteFor = (field: string): { text: string; refused: boolean } | null => {
+    if (failed?.field === field) return { text: failed.error, refused: true };
+    if (stepProblem?.field === field) {
+      return { text: stepProblem.message, refused: false };
+    }
+    return null;
+  };
+
+  /** That note, rendered. Ink for a gap, destructive for a refusal. */
+  const fieldNote = (field: string) => {
+    const note = noteFor(field);
+    if (!note) return null;
+    return (
+      <p
+        id={`${idFor(field)}-note`}
+        role={note.refused ? "alert" : "status"}
+        className={cn("text-sm", note.refused && "text-destructive")}
+      >
+        {note.text}
+      </p>
+    );
+  };
+
+  /** The props every control needs so its note is announced with it. */
+  const noteProps = (field: string) => {
+    const note = noteFor(field);
+    return {
+      "aria-invalid": note?.refused ? (true as const) : undefined,
+      "aria-describedby": note ? `${idFor(field)}-note` : undefined,
+    };
+  };
 
   const formError = failed && !failed.field ? failed.error : null;
 
@@ -269,11 +324,6 @@ export function RequestSheet({
    */
   const problemOn = useCallback(
     (index: number): StepProblem | null => {
-      if (index === WHEN) {
-        if (range?.end == null) return { message: t("form.step.when.missing", language) };
-        if (dateProblem) return { message: dateProblem };
-        return null;
-      }
       if (index === WHO) {
         if (guestName.trim() === "") {
           return { message: t("form.name.required", language), field: "guestName" };
@@ -292,7 +342,7 @@ export function RequestSheet({
       }
       return null;
     },
-    [range, dateProblem, guestName, guestEmail, language],
+    [guestName, guestEmail, language],
   );
 
   /** The earliest step that is not finished, or `from` if they all are. */
@@ -321,27 +371,30 @@ export function RequestSheet({
     setStep((current) => Math.min(current + 1, CHECK));
   }
 
+  // There is nothing behind the first question — the X in the corner is how you
+  // leave — so Back is not rendered there at all. A button whose only job is to
+  // do what the control above it already does is a button that has to be read
+  // and dismissed.
   function goBack() {
     setStepProblem(null);
-    // Back from the first question is back to the house. The pair stays put
-    // rather than appearing on step two, so the buttons never move under a
-    // thumb that is already reaching for them.
-    if (step === WHEN) {
-      setOpen(false);
-      return;
-    }
-    setStep((current) => Math.max(current - 1, WHEN));
+    setStep((current) => Math.max(current - 1, WHO));
   }
 
   /**
-   * The one button on the house page, and it always opens the flow.
+   * The one button on the house page: the hinge between the month and the ask.
    *
-   * It used to send anyone without dates to the calendar instead, which on a
-   * phone looked exactly like nothing happening. Step one *is* the calendar now,
-   * so there is nothing to pick first. If dates were picked on the page and have
-   * since gone stale, the flow opens on the step that needs fixing.
+   * With nights chosen it opens on the first question the page cannot answer.
+   * Without them there is nothing to ask *about*, so instead of opening on a
+   * second copy of the grid it says so, one line above the thumb that just
+   * tapped, and brings the grid back under it.
    */
   function handleCta() {
+    if (!range || range.end == null || dateProblem) {
+      setNeedsNights(range?.end == null);
+      calendarRef.current?.scrollIntoView({ block: "center" });
+      return;
+    }
+    setNeedsNights(false);
     setStepProblem(null);
     setStep((current) => firstUnfinished(current));
     setOpen(true);
@@ -351,6 +404,7 @@ export function RequestSheet({
 
   const titleRef = useRef<HTMLHeadingElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const calendarRef = useRef<HTMLDivElement>(null);
   const shownStep = useRef(step);
 
   // A new question is a new screen. Move focus to it so a screen reader reads
@@ -380,8 +434,15 @@ export function RequestSheet({
     }
 
     if (!state.field) return;
+    // A refusal about the dates has already closed the sheet; the grid on the
+    // page is the control it is about. No smooth scroll: reduced motion is a
+    // setting.
+    if (DATE_FIELDS.has(state.field)) {
+      calendarRef.current?.scrollIntoView({ block: "center" });
+      return;
+    }
     // Every control's id is `${baseId}-${name}` and the action's `field` is
-    // that name. No smooth scroll: reduced motion is a setting.
+    // that name.
     const node = document.getElementById(`${baseId}-${state.field}`);
     if (!node) return;
     node.scrollIntoView({ block: "center" });
@@ -391,7 +452,6 @@ export function RequestSheet({
   /* ---------- copy --------------------------------------------------- */
 
   const question = [
-    t("form.step.when", language),
     t("form.step.who", language),
     t("form.step.say", language),
     t("form.step.check", language),
@@ -405,48 +465,66 @@ export function RequestSheet({
     return Array.from({ length: cap }, (_, index) => index + 1);
   }, [rules.maxGuests]);
 
-  // One line above the buttons, for the refusals that belong to no single
-  // control: the dates (which own a whole screen) and whatever the server said
-  // about the request as a whole.
-  const footerMessage =
-    (stepProblem && !stepProblem.field ? stepProblem.message : null) ??
-    (step === CHECK ? formError : null) ??
-    (step === WHEN ? dateProblem : null);
+  // One line above the buttons in the sheet, for a refusal that belongs to no
+  // single control.
+  const footerMessage = step === CHECK ? formError : null;
+
+  /**
+   * The one line above the button on the page, and only ever one.
+   *
+   * A refusal from the server outranks the house's own rules, which outrank
+   * "you have not chosen yet"; below all three, the stay itself, once there is
+   * one to state. The bar carried a permanent grey "Pick your dates" once,
+   * which is an instruction rather than information and was there whether or
+   * not anyone needed it.
+   */
+  const dateRefusal =
+    failed?.field && DATE_FIELDS.has(failed.field) ? failed.error : null;
+  const barNote =
+    dateRefusal ??
+    dateProblem ??
+    (needsNights ? t("form.step.when.missing", language) : null);
 
   return (
     <>
       {/* Calendar ------------------------------------------------------------ */}
-      {/* Also on the page, not only inside the flow: someone who was sent this
-          link wants to know whether August is free before they commit to
-          answering four questions. Same state as step one, so a night tapped
-          here is already chosen when the sheet opens. */}
-      <StayCalendar
-        disabledDates={takenNights}
-        pendingDates={pendingNights}
-        min={min}
-        max={max}
-        value={range}
-        // The setter itself: stable, and the calendar only ever hands back a
-        // value, never an updater.
-        onChange={setRange}
-        language={language}
-      />
-
-      {dateProblem ? (
-        <p role="status" className="text-sm text-destructive">
-          {dateProblem}
-        </p>
-      ) : null}
+      {/* The only grid in the product's guest half. It is on the invitation
+          rather than inside the flow because the first thing anyone opening
+          this link wants is to know whether August is free, and because a sheet
+          that opens on a copy of what is already behind it reads as a flow that
+          did nothing. */}
+      <div ref={calendarRef} className="scroll-mt-6">
+        <StayCalendar
+          disabledDates={takenNights}
+          pendingDates={pendingNights}
+          min={min}
+          max={max}
+          value={range}
+          onChange={(next) => {
+            setRange(next);
+            setNeedsNights(false);
+            // A refusal about the dates is answered by moving the dates, so
+            // moving them is what takes it off the page.
+            touched();
+          }}
+          explain
+          language={language}
+        />
+      </div>
 
       {/* Pinned bar ---------------------------------------------------------- */}
       {/* `fixed`, which means it escapes the layout's centred column and has to
           rebuild it. The page pads its own bottom by this bar's height. */}
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 supports-backdrop-filter:bg-background/80 supports-backdrop-filter:backdrop-blur">
         <div className="mx-auto flex w-full max-w-[560px] flex-col gap-2 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          {/* Nothing here until there is something to say. The bar used to
-              carry a grey "Pick your dates" at all times, which is an
-              instruction, not information. */}
-          {range?.end != null && nights !== null && !dateProblem ? (
+          {barNote ? (
+            <p
+              role={dateRefusal ? "alert" : "status"}
+              className={cn("text-sm", dateRefusal && "text-destructive")}
+            >
+              {barNote}
+            </p>
+          ) : range?.end != null && nights !== null ? (
             <p className="num truncate font-heading text-base">
               {humanRange(range.start, range.end, language)}
               <span className="text-muted-foreground">
@@ -487,10 +565,6 @@ export function RequestSheet({
           // shadcn's own close control is 28px, under the 44px floor, and lives
           // in a file this slice does not own. Ours is below, at 44.
           showCloseButton={false}
-          // One height for all four screens. A sheet that grows and shrinks as
-          // the questions change makes the Back and Next pair jump around under
-          // the thumb, and a stepped flow is supposed to feel like one screen
-          // being answered four times.
           aria-describedby={undefined}
           // `bg-background`, not shadcn's white `bg-popover`. Two reasons, and
           // the second is the real one: the whole product is warm paper and a
@@ -498,7 +572,16 @@ export function RequestSheet({
           // uses; and shadcn's calendar paints itself `bg-background`, so on
           // white it showed up as a stray grey slab with a hard edge. Matching
           // the surface removes the slab without overriding anything.
-          className="gap-0 rounded-t-xl bg-background p-0 data-[side=bottom]:h-[88svh]"
+          //
+          // `max-h`, not `h`. A fixed 88svh was one height for four screens,
+          // which was defensible while one of them was a calendar; with the
+          // grid on the page the questions are two controls and a card, and the
+          // sheet held roughly 335px of empty paper between the last of them
+          // and the button underneath. A gap that size between a question and
+          // the button that answers it reads as something still loading. It
+          // sizes to what it is asking now, and stops at 88svh when the check
+          // screen or a long note needs more.
+          className="gap-0 rounded-t-xl bg-background p-0 data-[side=bottom]:max-h-[88svh]"
         >
           <div className="flex items-center justify-between gap-2 px-4 pt-3">
             <StepDots
@@ -554,24 +637,7 @@ export function RequestSheet({
             <input type="hidden" name="note" value={note} />
 
             <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-4 pt-2 pb-6">
-              {/* 1 · When ---------------------------------------------------- */}
-              {step === WHEN ? (
-                <StayCalendar
-                  disabledDates={takenNights}
-                  pendingDates={pendingNights}
-                  min={min}
-                  max={max}
-                  value={range}
-                  onChange={(next) => {
-                    setRange(next);
-                    setStepProblem(null);
-                  }}
-                  language={language}
-                  className="w-full"
-                />
-              ) : null}
-
-              {/* 2 · Who ----------------------------------------------------- */}
+              {/* 1 · Who ----------------------------------------------------- */}
               {step === WHO ? (
                 <div className="flex flex-col gap-7">
                   <div className="flex flex-col gap-2">
@@ -585,6 +651,11 @@ export function RequestSheet({
                         setGuestName(event.target.value);
                         touched();
                       }}
+                      // An empty bordered box under a label reads as a control
+                      // that failed to render. It also has something worth
+                      // saying: this is a family, not a passport desk, and one
+                      // name is enough.
+                      placeholder={t("form.name.placeholder", language)}
                       autoComplete="name"
                       autoCapitalize="words"
                       spellCheck={false}
@@ -593,23 +664,10 @@ export function RequestSheet({
                       // throws the keyboard up over the Back and Next pair
                       // before the guest has read the question.
                       disabled={busy}
-                      aria-invalid={messageFor("guestName") ? true : undefined}
-                      aria-describedby={
-                        messageFor("guestName")
-                          ? `${idFor("guestName")}-error`
-                          : undefined
-                      }
+                      {...noteProps("guestName")}
                       className="h-12 text-base"
                     />
-                    {messageFor("guestName") ? (
-                      <p
-                        id={`${idFor("guestName")}-error`}
-                        role="alert"
-                        className="text-sm text-destructive"
-                      >
-                        {messageFor("guestName")}
-                      </p>
-                    ) : null}
+                    {fieldNote("guestName")}
                   </div>
 
                   {/* A row of numbers to tap, not a dropdown. Nobody has ever
@@ -643,16 +701,12 @@ export function RequestSheet({
                         </label>
                       ))}
                     </div>
-                    {messageFor("guests") ? (
-                      <p role="alert" className="text-sm text-destructive">
-                        {messageFor("guests")}
-                      </p>
-                    ) : null}
+                    {fieldNote("guests")}
                   </fieldset>
                 </div>
               ) : null}
 
-              {/* 3 · Anything to say ----------------------------------------- */}
+              {/* 2 · Anything to say ----------------------------------------- */}
               {step === SAY ? (
                 <div className="flex flex-col gap-7">
                   <div className="flex flex-col gap-2">
@@ -672,14 +726,10 @@ export function RequestSheet({
                       maxLength={500}
                       rows={4}
                       disabled={busy}
-                      aria-invalid={messageFor("note") ? true : undefined}
+                      {...noteProps("note")}
                       className="min-h-32 text-base"
                     />
-                    {messageFor("note") ? (
-                      <p role="alert" className="text-sm text-destructive">
-                        {messageFor("note")}
-                      </p>
-                    ) : null}
+                    {fieldNote("note")}
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -702,28 +752,15 @@ export function RequestSheet({
                       spellCheck={false}
                       maxLength={254}
                       disabled={busy}
-                      aria-invalid={messageFor("guestEmail") ? true : undefined}
-                      aria-describedby={
-                        messageFor("guestEmail")
-                          ? `${idFor("guestEmail")}-error`
-                          : undefined
-                      }
+                      {...noteProps("guestEmail")}
                       className="h-12 text-base"
                     />
-                    {messageFor("guestEmail") ? (
-                      <p
-                        id={`${idFor("guestEmail")}-error`}
-                        role="alert"
-                        className="text-sm text-destructive"
-                      >
-                        {messageFor("guestEmail")}
-                      </p>
-                    ) : null}
+                    {fieldNote("guestEmail")}
                   </div>
                 </div>
               ) : null}
 
-              {/* 4 · Does this look right? ----------------------------------- */}
+              {/* 3 · Does this look right? ----------------------------------- */}
               {/* Not a list of labelled values. One object: a place, a stretch
                   of time, the people coming, and what they said. */}
               {step === CHECK ? (
@@ -746,6 +783,19 @@ export function RequestSheet({
                           })}
                         </p>
                       ) : null}
+                      {/* Back walks the questions; the nights are not one of
+                          them any more, so the way to change them is to say so
+                          here. It closes the sheet onto the grid, which is
+                          where they were chosen in the first place. */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setOpen(false)}
+                        disabled={busy}
+                        className="-ms-2 mt-1 h-11 self-start px-2 text-muted-foreground"
+                      >
+                        {t("form.dates.change", language)}
+                      </Button>
                     </div>
 
                     <div className="flex flex-col gap-0.5 border-t border-border pt-4">
@@ -782,15 +832,20 @@ export function RequestSheet({
                 </p>
               ) : null}
               <div className="flex gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={goBack}
-                  disabled={busy}
-                  className="h-12 flex-1 text-base"
-                >
-                  {t("common.back", language)}
-                </Button>
+                {/* No Back on the first question: there is nothing behind it,
+                    and a button that only closes the sheet is the X in the
+                    corner said a second time, in a heavier voice. */}
+                {step > WHO ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={goBack}
+                    disabled={busy}
+                    className="h-12 flex-1 text-base"
+                  >
+                    {t("common.back", language)}
+                  </Button>
+                ) : null}
                 {step === CHECK ? (
                   <Button
                     type="submit"
@@ -807,7 +862,10 @@ export function RequestSheet({
                   <Button
                     type="button"
                     onClick={goNext}
-                    className="h-12 flex-[2] text-base"
+                    className={cn(
+                      "h-12 text-base",
+                      step === WHO ? "w-full" : "flex-[2]",
+                    )}
                   >
                     {t("common.next", language)}
                   </Button>
