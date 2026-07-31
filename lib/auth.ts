@@ -3,15 +3,35 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { db } from "@/db";
+import { googleCredentials } from "@/lib/google/config";
 import { sendMagicLinkEmail } from "./email";
 
 /**
  * Owners only. Guests never authenticate — a booking token in a URL is their
  * identity, which is the whole point of a link you can forward to family.
  *
- * Magic link only: nobody wants to type a password on a phone, and there is no
- * password to leak.
+ * No password behind either door: nobody wants to type one on a phone, and
+ * there is nothing to leak. Google is the wide door once it exists; the magic
+ * link is the one that has always been there and stays until Google has been
+ * proven on a real deployment, because taking it away first would lock an owner
+ * out of their own house with no second key.
  */
+
+/**
+ * Google is registered only when this deployment actually has an OAuth client.
+ *
+ * With the variables absent this is `null`, `socialProviders` is `{}`, and
+ * better-auth's `Object.entries(options.socialProviders || {})` finds nothing —
+ * the same auth instance the app has been running all along, no provider, no
+ * warning, no throw. That is not a nicety: the credentials do not exist yet, and
+ * everything here has to keep booting until they do.
+ *
+ * Read once, at module load, because that is when the config object is built.
+ * A dev server restart is what picks up a freshly pasted `.env.local`, which is
+ * the same restart the rest of the config already needs.
+ */
+const google = googleCredentials();
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
   secret: process.env.BETTER_AUTH_SECRET,
@@ -23,6 +43,51 @@ export const auth = betterAuth({
     updateAge: 60 * 60 * 24,
   },
   emailAndPassword: { enabled: false },
+  /**
+   * Identity only. **No calendar scope here, on purpose.**
+   *
+   * better-auth's Google defaults are `openid`, `email`, `profile` and nothing
+   * is added to them, so the first screen a new owner ever sees says "Yazlık
+   * wants your name and email address" and stops. Calendar access is a separate
+   * consent, asked later from Settings by someone who has already decided they
+   * want it — and never asked at all of an owner who doesn't.
+   *
+   * `accessType: "offline"` and `prompt: "consent"` are what make a **refresh
+   * token** arrive, and both are load-bearing for the calendar work that comes
+   * after this. Google returns a refresh token only when the request is offline
+   * *and* the grant is new — a returning user who has already consented gets an
+   * access token and silence. `prompt: "consent"` is what forces the second ask
+   * when the calendar scope is added to an account that already granted
+   * identity; without it that upgrade succeeds, stores no refresh token, and
+   * sync dies at the first hour boundary with nothing in the logs to explain it.
+   *
+   * The cost is that Google shows its consent screen on every sign-in rather
+   * than remembering. For two lines it is the right trade.
+   *
+   * Option names checked against `@better-auth/core@1.6.25`'s `GoogleOptions`
+   * (`social-providers/google.ts`), which passes `options.accessType` and
+   * `options.prompt` straight into the authorization URL. Getting either name
+   * wrong is silent — the URL simply lacks the parameter.
+   *
+   * Tokens land in better-auth's own `account` table (`accessToken`,
+   * `refreshToken`, `accessTokenExpiresAt`, `scope`), which is where the
+   * calendar client reads them from. Nothing bespoke stores them.
+   *
+   * An owner who already signed in by magic link keeps the same user row: their
+   * email is verified (the magic link is what verified it) and Google's
+   * `email_verified` is true, which is exactly the pair better-auth's implicit
+   * account linking requires. Same person, same house, second door.
+   */
+  socialProviders: google
+    ? {
+        google: {
+          clientId: google.clientId,
+          clientSecret: google.clientSecret,
+          accessType: "offline",
+          prompt: "consent",
+        },
+      }
+    : {},
   plugins: [
     magicLink({
       sendMagicLink: async ({ email, url }) => sendMagicLinkEmail(email, url),

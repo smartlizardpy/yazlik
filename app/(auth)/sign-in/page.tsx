@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { isGoogleConfigured } from "@/lib/google/config";
 import { SignInForm } from "./sign-in-form";
 
 export const metadata: Metadata = {
@@ -6,7 +7,25 @@ export const metadata: Metadata = {
   description: "Sign in to Yazlık with a link sent to your email.",
 };
 
-export default function SignInPage() {
+export default async function SignInPage(props: PageProps<"/sign-in">) {
+  const googleEnabled = isGoogleConfigured();
+
+  /**
+   * A Google sign-in that fails comes back here as `?error=…`, because
+   * `signInWithGoogle` asks for that rather than better-auth's own error page.
+   * The query is read on the server so the very first render already carries
+   * the answer — the alternative is a client component discovering it after
+   * hydration and either flashing the wrong screen or arguing with the HTML.
+   *
+   * Read **only** when there is a Google button that could have failed. Touching
+   * `searchParams` is what opts a page into dynamic rendering, and a deployment
+   * with no Google credentials should stay exactly the statically rendered page
+   * it is today.
+   */
+  const { error } = googleEnabled
+    ? await props.searchParams
+    : { error: undefined };
+
   return (
     <div className="flex flex-1 flex-col">
       {/*
@@ -25,9 +44,16 @@ export default function SignInPage() {
         form fall to the bottom of the layout's column.
 
         NODE_ENV is read here, on the server, and passed down — the page is the
-        right place to know which environment it is running in.
+        right place to know which environment it is running in. Whether Google
+        is configured is the same kind of fact and travels the same way: a
+        client component asking `process.env` would be asking the browser, and
+        a Google button that leads nowhere is worse than no button at all.
       */}
-      <SignInForm showDevNote={process.env.NODE_ENV !== "production"} />
+      <SignInForm
+        showDevNote={process.env.NODE_ENV !== "production"}
+        googleEnabled={googleEnabled}
+        googleErrorCode={typeof error === "string" ? error : null}
+      />
     </div>
   );
 }

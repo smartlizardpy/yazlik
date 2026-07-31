@@ -45,10 +45,17 @@
  * to loosen the policy for every future guest to get one booking through.
  * Integrity stays with the database; policy stays with the person.
  *
- * ### Mail never decides anything
+ * ### Mail never decides anything, and neither does Google
  *
  * The row is committed before a single email is composed. A dead mail provider
  * costs a notification, never an approval.
+ *
+ * The Google Calendar sync sits in exactly the same place and under exactly the
+ * same rule, one step further out: it runs **after** the commit and after the
+ * mail, it is awaited only so the row's `googleSync` is settled before the
+ * screen re-reads it, and `lib/google/sync.ts` promises never to throw. A house
+ * with no calendar connected — which is every house today — costs one `if` and
+ * zero Google calls. See the module note there for what each failure does.
  *
  * Everything an owner reads here is English — the dashboard is English in v1,
  * and its errors should match it. Guest-facing copy lives in `lib/emails.ts`.
@@ -62,6 +69,7 @@ import { db } from "@/db";
 import { bookings, houses, type Booking, type House } from "@/db/schema";
 import { isDateStr, nightsBetween } from "@/lib/dates";
 import { sendBookingConfirmed, sendBookingDeclined } from "@/lib/emails";
+import { syncBooking, syncRemovedBooking } from "@/lib/google/sync";
 import { newToken } from "@/lib/ids";
 import { getOwnerHouse, requireOwner } from "@/lib/session";
 
@@ -319,6 +327,11 @@ export async function approveBooking(bookingId: string): Promise<DecisionResult>
 
   await mail("confirmation", () => sendBookingConfirmed(house, confirmed));
 
+  // The dates are the guest's whatever Google says next. This can only set
+  // `googleSync`; it cannot fail this action, and on an unconnected house it
+  // does nothing at all.
+  await syncBooking(confirmed, house);
+
   return { ok: true };
 }
 
@@ -399,6 +412,11 @@ export async function declineBooking(
 
   await mail("decline", () => sendBookingDeclined(house, declined));
 
+  // A pending request never reached the calendar, so this is almost always a
+  // no-op. It runs anyway, because "almost always" is not a guarantee: a row
+  // that was somehow confirmed and synced first would leave its event behind.
+  await syncBooking(declined, house);
+
   return { ok: true };
 }
 
@@ -453,6 +471,7 @@ export async function blockDates(
   }
 
   let saved = false;
+  let created: Booking | null = null;
   let lastError: unknown = null;
 
   // The token is never used — a block has no guest page — but the column is the
@@ -460,18 +479,25 @@ export async function blockDates(
   // draw collides about never; when it does, draw again.
   for (let attempt = 0; attempt < 3 && !saved; attempt++) {
     try {
-      await db.insert(bookings).values({
-        houseId: house.id,
-        kind: "block",
-        guests: 1,
-        note: parsed.data.note,
-        startDate: parsed.data.startDate,
-        endDate: parsed.data.endDate,
-        status: "confirmed",
-        token: newToken(),
-        // Created and decided in one tap; there was never anything pending.
-        decidedAt: new Date(),
-      });
+      // `returning()` is here only so the new row can be handed to the calendar
+      // sync below. A driver that answers with no row still counts as saved —
+      // the insert did not throw, and the block exists.
+      const [row] = await db
+        .insert(bookings)
+        .values({
+          houseId: house.id,
+          kind: "block",
+          guests: 1,
+          note: parsed.data.note,
+          startDate: parsed.data.startDate,
+          endDate: parsed.data.endDate,
+          status: "confirmed",
+          token: newToken(),
+          // Created and decided in one tap; there was never anything pending.
+          decidedAt: new Date(),
+        })
+        .returning();
+      created = row ?? null;
       saved = true;
     } catch (error) {
       lastError = error;
@@ -487,6 +513,11 @@ export async function blockDates(
   }
 
   revalidateDates(house.slug);
+
+  // A block the owner made is a week the house is not free, which is exactly
+  // what belongs on their calendar. Same rule as an approval: it cannot fail
+  // this action.
+  if (created) await syncBooking(created, house);
 
   return { ok: true };
 }
@@ -531,6 +562,10 @@ export async function unblockDates(bookingId: string): Promise<DecisionResult> {
   }
 
   revalidateDates(house.slug);
+
+  // The row is gone, so there is nothing left to write a sync state to — only
+  // an event on Google to take down. If it is already gone, that is a success.
+  await syncRemovedBooking(booking, house);
 
   return { ok: true };
 }

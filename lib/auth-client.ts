@@ -21,3 +21,31 @@ export const authClient = createAuthClient({
 });
 
 export const { signIn, signOut, useSession } = authClient;
+
+/**
+ * Hand the browser to Google, and ask to be given back at `/app`.
+ *
+ * There is no `googleClient()` plugin to add — social sign-in is part of
+ * better-auth's core client, so the plugin list above stays as it was.
+ *
+ * This does not resolve the way the magic-link call does. On success the
+ * response carries `{ redirect: true, url }` and better-auth's own fetch plugin
+ * sets `window.location.href` from it, so the page is already leaving by the
+ * time anyone could read the result. Callers get a rejected promise or an
+ * `error` only when the round trip never started — offline, or a server with no
+ * Google provider registered. Whatever state a caller sets before this should
+ * stay set; there is no "back to idle" on the happy path.
+ *
+ * `errorCallbackURL` is the one that matters for a person. Without it, a
+ * cancelled consent screen or a mismatched account lands on better-auth's bare
+ * `/api/auth/error` page — a dead end with no way back to the house. With it,
+ * they come back to `/sign-in?error=…`, which the form reads and answers in
+ * words, with the email link still on offer underneath.
+ */
+export function signInWithGoogle() {
+  return signIn.social({
+    provider: "google",
+    callbackURL: "/app",
+    errorCallbackURL: "/sign-in",
+  });
+}
