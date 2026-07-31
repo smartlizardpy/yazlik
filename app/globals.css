@@ -23,16 +23,29 @@
 
 @theme inline {
   /* Type ------------------------------------------------------------------
-     One family throughout. The literal family name is required here: an
-     `@theme inline` value is inlined into every generated utility at parse
-     time, so `var(--font-inter)` would resolve to nothing. next/font sets
-     `--font-inter` on <html> and registers the "Inter" @font-face. */
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-    Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-  --font-heading: var(--font-sans);
+     TWO families: Inter for everything you operate, Fraunces for everything
+     you are told. With no accent hue and frequently no photographs, type is
+     the only place personality can come from, so the two faces have to be
+     genuinely different — a serif against a grotesque, not two greys.
 
-  /* Scale: 13 / 15 / 17 / 22 / 28. 2xl+ extended to keep the ramp monotonic. */
+     The literal family name is required here: an `@theme inline` value is
+     inlined into every generated utility at parse time, so
+     `var(--font-inter)` would resolve to nothing. next/font (Turbopack)
+     registers the @font-face under the *unhashed* family name and its
+     metric-matched "… Fallback" companion — both are named below, so nothing
+     reflows when the webfont lands. Verified against the compiled CSS in
+     `.next`, not assumed. */
+  --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --font-heading: "Fraunces", "Fraunces Fallback", ui-serif, Georgia,
+    "Times New Roman", serif;
+
+  /* Scale: 13 / 15 / 17 / 22 / 28 · 34 / 40 / 48.
+     The top three are the display sizes and only ever wear --font-heading.
+     They exist because *nothing was ever large*: a screen where 70% of the
+     type is 13–15px has no voice, and the fix is not more weight (capped at
+     600 below) or an accent colour (there isn't one) — it is size. */
   --text-xs: 0.8125rem; /* 13 */
   --text-xs--line-height: 1.125rem;
   --text-sm: 0.9375rem; /* 15 */
@@ -44,15 +57,20 @@
   --text-lg--letter-spacing: -0.01em;
   --text-xl: 1.75rem; /* 28 */
   --text-xl--line-height: 2.125rem;
-  --text-xl--letter-spacing: -0.02em;
+  --text-xl--letter-spacing: -0.015em;
+  /* Display. Line height tightens as size grows, and the tracking stays
+     gentle: a serif does not want the -0.025em a 40px grotesque needs. */
   --text-2xl: 2.125rem; /* 34 */
-  --text-2xl--line-height: 2.5rem;
-  --text-2xl--letter-spacing: -0.02em;
+  --text-2xl--line-height: 2.375rem;
+  --text-2xl--letter-spacing: -0.015em;
   --text-3xl: 2.5rem; /* 40 */
-  --text-3xl--line-height: 2.875rem;
-  --text-3xl--letter-spacing: -0.025em;
+  --text-3xl--line-height: 2.75rem;
+  --text-3xl--letter-spacing: -0.018em;
+  --text-4xl: 3rem; /* 48 */
+  --text-4xl--line-height: 3.25rem;
+  --text-4xl--letter-spacing: -0.02em;
 
-  /* Nothing bolder than 600. */
+  /* Nothing bolder than 600. Size and family carry emphasis; weight does not. */
   --font-weight-bold: 600;
   --font-weight-extrabold: 600;
   --font-weight-black: 600;
@@ -99,6 +117,12 @@
      block below for why this product has no accent colour. */
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
+
+  /* The fill for a night that has gone. Not a new colour — it is --border,
+     given a name. `bg-muted` (#F0EDE6) sits 1.5% off the paper and simply
+     disappeared on a phone in daylight, which left the taken nights on the
+     calendar indistinguishable from the free ones. */
+  --color-taken: var(--border);
 
   /* Radius: 10px everywhere. */
   --radius-sm: calc(var(--radius) * 0.6);
@@ -271,6 +295,29 @@
   body {
     @apply bg-background text-foreground;
     text-rendering: optimizeLegibility;
+  }
+
+  /* The display face, and the two axes that make it *this* serif rather than
+     a serif: WONK swaps in the alternate /g and /y, SOFT takes the edge off
+     the terminals. Warmth by drawing, not by decoration.
+
+     `opsz` is deliberately absent from font-variation-settings so that
+     `font-optical-sizing: auto` keeps working — the same family then draws
+     sturdy at 17px and high-contrast at 48px.
+
+     h1–h3 get it by default so a heading is a heading without anyone having
+     to remember. Anything that wants the grotesque back says `font-sans`,
+     which wins on layer order. h4–h6 are left alone: at these sizes they are
+     usually labels, and a label is not a voice. */
+  h1,
+  h2,
+  h3,
+  .font-heading {
+    @apply font-heading;
+    font-optical-sizing: auto;
+    font-variation-settings:
+      "SOFT" 24,
+      "WONK" 1;
   }
 
   /* Dates and numbers must not jitter as they change. */

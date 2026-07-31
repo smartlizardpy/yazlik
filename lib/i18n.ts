@@ -22,7 +22,7 @@ import en from "@/lib/i18n/en.json";
 import tr from "@/lib/i18n/tr.json";
 
 import type { CheckFailureCode, HouseRules } from "@/lib/availability";
-import { isDateStr, type DateStr } from "@/lib/dates";
+import { isDateStr, toDate, type DateStr } from "@/lib/dates";
 
 /* ============================================================
    TYPES
@@ -156,11 +156,184 @@ export function dayLabel(day: DateStr, lang: Lang): string {
   });
 }
 
-/** Two days as one line: `1 August 2026 – 8 August 2026`. */
+/**
+ * Two days as one line: `1 August 2026 – 8 August 2026`.
+ *
+ * The written form. Unambiguous, fully spelled out, never abbreviated: this is
+ * what goes in an .ics file, an email subject and anywhere a date has to
+ * survive being read six months later out of context. Do not "improve" it —
+ * {@link humanRange} is the one you want on a screen.
+ */
 export function rangeLabel(start: DateStr, end: DateStr, lang: Lang): string {
   return t("format.range", lang, {
     from: dayLabel(start, lang),
     to: dayLabel(end, lang),
+  });
+}
+
+/* ============================================================
+   SPOKEN DATES
+
+   Nobody says "18 August 2026 – 23 August 2026". They say "Tuesday the 18th
+   to Sunday the 23rd" — the weekday, because that is what you actually plan
+   around, and the year only if it is not this one. `rangeLabel` writes a
+   date; these two say one.
+   ============================================================ */
+
+/**
+ * Three-letter months, per language.
+ *
+ * These live in code rather than in the dictionaries on purpose: they are a
+ * mechanical shortening of `month.N`, not a translation decision, and the two
+ * JSON files have to stay key-for-key identical for the dictionary test. Drift
+ * is caught in `lib/i18n.test.ts`, which asserts every entry here is still a
+ * prefix of the full month name it abbreviates.
+ */
+const SHORT_MONTHS: Record<Lang, readonly string[]> = {
+  en: [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ],
+  tr: [
+    "Oca",
+    "Şub",
+    "Mar",
+    "Nis",
+    "May",
+    "Haz",
+    "Tem",
+    "Ağu",
+    "Eyl",
+    "Eki",
+    "Kas",
+    "Ara",
+  ],
+};
+
+/** The pieces of a spoken date. An absent piece is one that is not said. */
+type SpokenDay = {
+  weekday: string;
+  day: number;
+  month?: string;
+  year?: number;
+};
+
+/**
+ * Word order, per language, following each locale's own short-date form:
+ * English puts the weekday first (`Tue 18 Aug`), Turkish puts it last
+ * (`18 Ağu Sal`). Getting this backwards is the tell of a translated
+ * interface, and it costs one line to get right.
+ */
+const SPEAK: Record<Lang, (parts: SpokenDay) => string> = {
+  en: ({ weekday, day, month, year }) =>
+    join([weekday, String(day), month, year]),
+  tr: ({ weekday, day, month, year }) =>
+    join([String(day), month, year, weekday]),
+};
+
+function join(parts: (string | number | undefined)[]): string {
+  return parts.filter((p) => p !== undefined).join(" ");
+}
+
+export type SpokenDateOptions = {
+  /**
+   * The year to treat as "this year", and therefore leave unsaid. Defaults to
+   * the current one. Pass it explicitly from a test, or from a server render
+   * that has to agree with the client across New Year's Eve.
+   */
+  currentYear?: number;
+};
+
+function thisYear(options: SpokenDateOptions): number {
+  return options.currentYear ?? new Date().getFullYear();
+}
+
+function parts(date: Date, lang: Lang): Omit<SpokenDay, "year"> {
+  return {
+    weekday: t(`weekday.short.${date.getDay()}`, lang),
+    day: date.getDate(),
+    month: SHORT_MONTHS[lang][date.getMonth()],
+  };
+}
+
+/**
+ * One day, said out loud: `Tue 18 Aug`, `18 Ağu Sal`.
+ *
+ * The year is silent unless it is not the current one — a stay next August
+ * does not need telling you which August, and a stay in 2027 does.
+ */
+export function humanDay(
+  day: DateStr,
+  lang: Lang,
+  options: SpokenDateOptions = {},
+): string {
+  if (!isDateStr(day)) return day;
+  const date = toDate(day);
+  const year = date.getFullYear();
+  return SPEAK[lang]({
+    ...parts(date, lang),
+    year: year === thisYear(options) ? undefined : year,
+  });
+}
+
+/**
+ * Two days, said as one stretch of time.
+ *
+ * - Inside one month, the month is said once: `Tue 18 – Sun 23 Aug`.
+ * - Across two, each end carries its own: `Sat 29 Aug – Wed 2 Sep`.
+ * - The year appears only where it is not the current one, which means a stay
+ *   over New Year reads `Tue 29 Dec – Sat 2 Jan 2027` rather than repeating
+ *   a year the reader is standing in.
+ * - Both days the same is not a range of nothing, it is a day: `Tue 18 Aug`.
+ *
+ * The two arguments are the same two `rangeLabel` takes — a check-in and a
+ * check-out, half-open `[start, end)` — so anywhere one is used the other can
+ * be swapped in without rethinking what the dates mean.
+ */
+export function humanRange(
+  start: DateStr,
+  end: DateStr,
+  lang: Lang,
+  options: SpokenDateOptions = {},
+): string {
+  // Anything that is not a real day falls back to the written form, which has
+  // its own passthrough for junk. A malformed date should look wrong, not
+  // throw a page away.
+  if (!isDateStr(start) || !isDateStr(end)) return rangeLabel(start, end, lang);
+  if (start === end) return humanDay(start, lang, options);
+
+  const from = toDate(start);
+  const to = toDate(end);
+  const year = thisYear(options);
+  const sameYear = from.getFullYear() === to.getFullYear();
+  const sameMonth = sameYear && from.getMonth() === to.getMonth();
+
+  const speak = SPEAK[lang];
+
+  return t("format.range", lang, {
+    from: speak({
+      ...parts(from, lang),
+      // Said once, on the far end, when both ends share it.
+      month: sameMonth ? undefined : SHORT_MONTHS[lang][from.getMonth()],
+      year:
+        sameYear || from.getFullYear() === year
+          ? undefined
+          : from.getFullYear(),
+    }),
+    to: speak({
+      ...parts(to, lang),
+      year: to.getFullYear() === year ? undefined : to.getFullYear(),
+    }),
   });
 }
 

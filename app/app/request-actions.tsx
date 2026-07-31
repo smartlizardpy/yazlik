@@ -1,41 +1,47 @@
 "use client";
 
 /**
- * Approve and decline, on one pending request.
+ * The two answers to one ask.
  *
- * The two live in one component because they are one decision with two answers,
- * and because both of them have to be able to disable the other while a tap is
- * in flight. Splitting them would mean lifting `busy` into a third component
- * that exists only to hold it.
+ * They live in one component because they are one decision, and because both of
+ * them have to be able to disable the other while a tap is in flight. Splitting
+ * them would mean lifting `busy` into a third component that exists only to
+ * hold it.
  *
- * ### Approve is the primary action on this screen
+ * ### Yes is a wall. No is a line of text.
  *
- * It carries the one accent; decline is an outline button next to it, the same
- * height and roughly the same width. Quiet, not hidden — an owner who has to
- * hunt for "no" ends up saying yes to be polite, which is the opposite of what
- * the product is for.
+ * These used to sit side by side, equal height, near-equal width, eight pixels
+ * apart, under a thumb. That is a mis-tap that cancels a cousin's holiday. So
+ * **Say yes** is the full width of the card and **Not that week** is a plain
+ * 44px line beneath it: the same target, a fraction of the weight. Quiet is not
+ * hidden — a host who has to hunt for "no" ends up saying yes to be polite,
+ * which is the opposite of what this is for.
+ *
+ * The words matter as much as the layout. Nobody approves their cousin, and a
+ * house is not declined — it is "not that week, come in September". The
+ * hospitality-industry verbs are what made this feel like software for managing
+ * strangers.
  *
  * ### The clash is not a surprise
  *
- * When a confirmed stay already covers these nights, `taken` is true, the
- * approve button is **not rendered**, and the card says so above the row. That
- * state is computed on the server in `app/app/page.tsx` from `rangesOverlap`, so
- * an owner sees it before they choose rather than after they tap.
+ * When a confirmed stay already covers these nights, `taken` is true, the yes is
+ * **not rendered**, and the card says so above the row. That state is computed
+ * on the server in `app/app/page.tsx` from `rangesOverlap`, so a host sees it
+ * before they choose rather than after they tap.
  *
  * A tap can still lose the race — two tabs, two owners, or a block created a
  * second ago — and that is exactly what
  * {@link import("@/app/_actions/decision").approveBooking} turns into "Those
  * dates were taken while you were deciding." That message lands on this card,
  * and `router.refresh()` runs on **every** outcome, so the next paint shows the
- * calendar as it really is: this card loses its approve button and the winning
- * request has moved to upcoming stays.
+ * house as it really is: this card loses its yes and the winning ask has moved
+ * down to who is coming.
  *
  * ### The reason goes to a person
  *
- * The decline sheet says whose inbox it lands in and that it is copied word for
- * word, because a reason written for a private note reads very differently when
- * the guest reads it. "Decline" is the word on the trigger, on the sheet, and on
- * the button that commits — it never becomes "reject" or "say no" on the way.
+ * The sheet says whose inbox it lands in and that it is copied word for word,
+ * because a note written for yourself reads very differently when the person it
+ * is about reads it.
  */
 
 import { useCallback, useId, useState, useTransition } from "react";
@@ -110,7 +116,7 @@ export function RequestActions({ bookingId, guestName, taken }: RequestActionsPr
           }
         } catch (thrown) {
           console.error(`[RequestActions] ${label} failed`, thrown);
-          setError(`The ${label} did not go through. Try again in a moment.`);
+          setError("That did not go through. Try again in a moment.");
         }
         setInFlight(null);
         // Every outcome, refusals included. A card that just lost a race is a
@@ -125,7 +131,7 @@ export function RequestActions({ bookingId, guestName, taken }: RequestActionsPr
     run(
       "approval",
       () => approveBooking(bookingId),
-      () => toast.success(`Approved. ${guestName} has the confirmation.`),
+      () => toast.success(`The house is ${guestName}'s that week.`),
     );
   }
 
@@ -135,55 +141,64 @@ export function RequestActions({ bookingId, guestName, taken }: RequestActionsPr
       () => declineBooking(bookingId, reason),
       () => {
         setOpen(false);
-        toast.success(`Declined. ${guestName} has your answer.`);
+        toast.success(`${guestName} has your answer.`);
       },
     );
   }
 
-  const notice = error ?? (taken ? "A confirmed stay covers these nights." : null);
+  const notice = error ?? (taken ? "Somebody else has those nights now." : null);
 
   return (
-    <div className="flex w-full flex-col gap-2">
+    <div className="flex w-full flex-col gap-1">
       {notice ? (
         <p
           role={error ? "alert" : undefined}
-          className={error ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+          className={
+            error ? "mb-2 text-sm text-destructive" : "mb-2 text-sm text-muted-foreground"
+          }
         >
           {notice}
         </p>
       ) : null}
 
-      <div className="flex gap-2">
-        {taken ? null : (
-          <Button
-            type="button"
-            onClick={approve}
-            disabled={busy}
-            className="h-11 flex-1 text-base"
-          >
-            {inFlight === "approval" ? "Approving…" : "Approve"}
-          </Button>
-        )}
+      {taken ? null : (
         <Button
           type="button"
-          variant="outline"
-          onClick={() => {
-            // A message about the approval that just lost a race has no business
-            // sitting above a decline button. The card keeps the durable half of
-            // it — `taken` — the moment this clears.
-            setError(null);
-            setOpen(true);
-          }}
+          onClick={approve}
           disabled={busy}
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          className={taken ? "h-11 w-full text-base" : "h-11 flex-1 text-base"}
+          className="h-12 w-full text-base"
         >
-          Decline
+          {inFlight === "approval" ? "Saying yes…" : "Say yes"}
         </Button>
-      </div>
+      )}
 
-      {/* Decline sheet ------------------------------------------------------ */}
+      {/* Same 44px target, a fraction of the visual weight — no border, no
+          fill, nothing that reads as a twin of the button above it. Unless the
+          nights are gone and this is the only thing left to do, in which case
+          it stops whispering and becomes the button. */}
+      <Button
+        type="button"
+        variant={taken ? "outline" : "ghost"}
+        onClick={() => {
+          // A message about the yes that just lost a race has no business
+          // sitting above this. The card keeps the durable half of it —
+          // `taken` — the moment this clears.
+          setError(null);
+          setOpen(true);
+        }}
+        disabled={busy}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className={
+          taken
+            ? "h-12 w-full text-base"
+            : "h-11 w-full text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+        }
+      >
+        Not that week
+      </Button>
+
+      {/* The other answer --------------------------------------------------- */}
       <Sheet
         open={open}
         onOpenChange={(next) => {
@@ -200,11 +215,11 @@ export function RequestActions({ bookingId, guestName, taken }: RequestActionsPr
           className="max-h-[92svh] gap-0 overflow-y-auto rounded-t-xl p-0"
         >
           <SheetHeader className="flex-row items-start justify-between gap-2 px-4 pt-4 pb-2">
-            <div className="flex flex-col gap-0.5">
-              <SheetTitle>Decline</SheetTitle>
-              <SheetDescription>
-                {guestName} gets an email with your answer. Whatever you write here
-                goes to them word for word.
+            <div className="flex flex-col gap-1">
+              <SheetTitle className="text-lg">Not that week</SheetTitle>
+              <SheetDescription className="text-sm">
+                {guestName} gets an email. What you write goes to them word for
+                word.
               </SheetDescription>
             </div>
             <SheetClose asChild>
@@ -220,7 +235,9 @@ export function RequestActions({ bookingId, guestName, taken }: RequestActionsPr
           </SheetHeader>
 
           <div className="flex flex-col gap-2 px-4 pb-4">
-            <Label htmlFor={reasonId}>Reason</Label>
+            <Label htmlFor={reasonId} className="text-sm">
+              What to tell them
+            </Label>
             <Textarea
               id={reasonId}
               value={reason}
@@ -228,33 +245,34 @@ export function RequestActions({ bookingId, guestName, taken }: RequestActionsPr
                 setReason(event.target.value);
                 setError(null);
               }}
-              placeholder="The house is full that week — try the week after."
+              placeholder="Selin has that week — come in September, the water is warmer."
               maxLength={REASON_LIMIT}
               rows={3}
               disabled={busy}
               aria-describedby={`${reasonId}-hint`}
               className="min-h-24 text-base"
             />
-            <p id={`${reasonId}-hint`} className="text-xs text-muted-foreground">
-              Optional. Leave it empty and the email carries the dates and nothing
-              else.
+            <p id={`${reasonId}-hint`} className="text-sm text-muted-foreground">
+              Optional. Without it the email carries the dates and nothing else.
             </p>
           </div>
 
           <div className="sticky bottom-0 flex flex-col gap-2 border-t border-border bg-popover px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             {error ? (
-              <p role="alert" className="text-xs text-destructive">
+              <p role="alert" className="text-sm text-destructive">
                 {error}
               </p>
             ) : null}
+            {/* Ink, not --destructive. Red is for a refusal the product is
+                sorry about; telling a cousin to come in September is not one,
+                and this is the sheet's only action either way. */}
             <Button
               type="button"
-              variant="destructive"
               onClick={decline}
               disabled={busy}
-              className="h-11 w-full text-base"
+              className="h-12 w-full text-base"
             >
-              {inFlight === "decline" ? "Declining…" : "Decline"}
+              {inFlight === "decline" ? "Sending…" : "Send it"}
             </Button>
           </div>
         </SheetContent>

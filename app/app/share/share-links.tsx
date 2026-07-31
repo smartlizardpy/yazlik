@@ -1,8 +1,27 @@
 "use client";
 
 /**
- * The interactive half of the share screen: copying a link, and replacing the
- * one that leaked.
+ * Handing a link to somebody, and replacing the one that leaked.
+ *
+ * ### The share sheet is the product
+ *
+ * The entire thing the owner does with this screen is paste a link into a
+ * family WhatsApp group. A phone already has one control for that, it is the
+ * one everybody's thumb knows, and it carries the message text alongside the
+ * URL so the thing that arrives in the chat reads like an invitation instead of
+ * a bare address. So `navigator.share` is the primary action, and copying is
+ * what happens on a laptop where there is no share sheet to open.
+ *
+ * Detection runs in an effect rather than at render: `navigator` does not exist
+ * on the server, and a button whose label depends on it would hydrate into a
+ * mismatch. Until the effect runs the copy path is what is on screen, which is
+ * the correct answer for anything that never gets JavaScript at all.
+ *
+ * `navigator.share` must be called inside the tap that asked for it — a
+ * browser revokes user activation across an `await` — so nothing is awaited
+ * before it. A dismissed sheet throws `AbortError` and means "changed my mind",
+ * not "failed"; anything else falls back to the clipboard rather than leaving a
+ * dead button.
  *
  * ### Copying has to actually work on a phone
  *
@@ -16,23 +35,30 @@
  *    still implemented everywhere, and the only thing that works off-origin.
  * 3. Select the link on screen so a long-press can copy it, and say so.
  *
- * Tier three is why {@link CopyLink} renders the URL as real selectable text
- * rather than as an opaque box with a button beside it. `select-all` also means
- * one tap selects the whole thing, which on a URL with no word boundaries in it
- * is the difference between copying a link and copying half of one.
+ * Tier three is why the URL is real selectable text on the page rather than an
+ * opaque box with a button beside it. It is no longer a monospace `<code>` in a
+ * bordered grey well, though: that is developer chrome, and this screen is for
+ * sending a link to your mother.
  *
  * ### The feedback is on the button, not in a toast
  *
  * A toast for "Copied" lands at the edge of the screen, away from the thumb
  * that just tapped, and disappears on its own schedule. Swapping the button's
- * own label to *Copied* puts the answer under the finger that asked, and the
- * `aria-live` region carries the same words for a screen reader. Toasts stay
- * for the thing that changed the database.
+ * own label puts the answer under the finger that asked, and the `aria-live`
+ * region carries the same words for a screen reader. Toasts stay for the thing
+ * that changed the database.
  */
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
-import { CheckIcon, CopyIcon, XIcon } from "lucide-react";
+import { CheckIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -49,6 +75,37 @@ import { rotateFeedToken } from "./actions";
 
 /** How long the button says "Copied" before it goes back to offering. */
 const FEEDBACK_MS = 2000;
+
+/* ============================================================
+   THE PHONE'S OWN SHARE SHEET
+   ============================================================ */
+
+/** What `navigator.share` takes, typed here so the file compiles on any lib.dom. */
+type Sharable = { title: string; text: string; url: string };
+
+type ShareCapableNavigator = Navigator & {
+  share?: (data: Sharable) => Promise<void>;
+  canShare?: (data: Sharable) => boolean;
+};
+
+function canOpenShareSheet(data: Sharable): boolean {
+  if (typeof navigator === "undefined") return false;
+  const nav = navigator as ShareCapableNavigator;
+  if (typeof nav.share !== "function") return false;
+  // Present but refusing this payload — a desktop Safari with no target, say.
+  if (typeof nav.canShare === "function" && !nav.canShare(data)) return false;
+  return true;
+}
+
+/**
+ * A browser capability is external state, so it is read the way external state
+ * is read. `useSyncExternalStore` gives the server (and the hydration pass)
+ * `false` and the client the truth, in one render, with no effect writing state
+ * back into the component — which is the pattern that causes the cascading
+ * re-render React now warns about.
+ */
+const NEVER_CHANGES = () => () => {};
+const NOT_ON_THE_SERVER = () => false;
 
 /* ============================================================
    CLIPBOARD
@@ -103,21 +160,43 @@ function selectElement(element: HTMLElement | null): void {
    ONE LINK
    ============================================================ */
 
-export type CopyLinkProps = {
+export type ShareLinkProps = {
   url: string;
-  /** What the button offers to copy — "Copy guest link", not "Copy". */
-  label: string;
+  /** Goes in the share sheet's title slot — the house, not the app. */
+  title: string;
+  /** The sentence that lands in the chat next to the link. */
+  message: string;
+  /** What the send button says. */
+  sendLabel: string;
+  /** What the copy button says when it is the only thing on offer. */
+  copyLabel: string;
   /**
    * `true` on the one link that is the point of the screen. Exactly one per
-   * screen carries the accent; everything else is an outline.
+   * screen carries the ink; everything else is an outline.
    */
   primary?: boolean;
 };
 
-export function CopyLink({ url, label, primary = false }: CopyLinkProps) {
+export function ShareLink({
+  url,
+  title,
+  message,
+  sendLabel,
+  copyLabel,
+  primary = false,
+}: ShareLinkProps) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const textRef = useRef<HTMLElement | null>(null);
+  const textRef = useRef<HTMLParagraphElement | null>(null);
+
+  const canSend = useSyncExternalStore(
+    NEVER_CHANGES,
+    useCallback(
+      () => canOpenShareSheet({ title, text: message, url }),
+      [title, message, url],
+    ),
+    NOT_ON_THE_SERVER,
+  );
 
   useEffect(() => {
     return () => {
@@ -136,41 +215,62 @@ export function CopyLink({ url, label, primary = false }: CopyLinkProps) {
     if (copied) timer.current = setTimeout(() => setState("idle"), FEEDBACK_MS);
   }, [url]);
 
-  return (
-    <div className="flex flex-col gap-2">
-      <code
-        ref={textRef}
-        // `select-all` so one tap takes the whole URL; `break-all` because a
-        // token has no spaces and would otherwise push the layout sideways.
-        className="block rounded-lg border border-border bg-muted/40 px-3 py-2.5 font-mono text-xs break-all select-all"
-      >
-        {url}
-      </code>
+  const send = useCallback(() => {
+    const nav = navigator as ShareCapableNavigator;
+    const share = nav.share;
+    if (!share) {
+      void copy();
+      return;
+    }
+    // Not awaited before the call: an `await` here spends the user activation
+    // the share sheet needs, and the browser refuses.
+    share.call(nav, { title, text: message, url }).catch((thrown: unknown) => {
+      // They opened the sheet and closed it again. Nothing happened, and
+      // nothing should be said about it.
+      if (thrown instanceof DOMException && thrown.name === "AbortError") return;
+      void copy();
+    });
+  }, [copy, message, title, url]);
 
+  return (
+    <div className="flex flex-col gap-1">
       <Button
         type="button"
         variant={primary ? "default" : "outline"}
-        onClick={copy}
-        className="h-11 w-full text-base"
+        onClick={canSend ? send : () => void copy()}
+        className="h-12 w-full text-base"
       >
         {state === "copied" ? (
           <CheckIcon className="size-4" aria-hidden="true" />
-        ) : (
-          <CopyIcon className="size-4" aria-hidden="true" />
-        )}
-        {state === "copied" ? "Copied" : label}
+        ) : null}
+        {state === "copied" ? "Copied" : canSend ? sendLabel : copyLabel}
       </Button>
+
+      {/* Only when the sheet took the top slot. On a laptop the button above is
+          already the copy button and this would be the same thing twice. */}
+      {canSend ? (
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => void copy()}
+          className="h-11 w-full text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+        >
+          {state === "copied" ? "Copied" : "Copy it instead"}
+        </Button>
+      ) : null}
+
+      {/* The link itself: quiet, plain, and selectable, because tier three of
+          the clipboard fallback is a long-press on exactly this text. */}
+      <p
+        ref={textRef}
+        className="mt-1 text-xs break-all text-muted-foreground select-all"
+      >
+        {url}
+      </p>
 
       {/* One region, always in the tree, so a screen reader announces the change
           instead of the arrival of a new element. */}
-      <p
-        aria-live="polite"
-        className={
-          state === "failed"
-            ? "text-xs text-muted-foreground"
-            : "sr-only"
-        }
-      >
+      <p aria-live="polite" className={state === "failed" ? "text-xs" : "sr-only"}>
         {state === "copied"
           ? "Copied to the clipboard."
           : state === "failed"
@@ -189,6 +289,13 @@ export type FeedLinkProps = {
   /** Origin with no trailing slash, e.g. `http://localhost:3100`. */
   baseUrl: string;
   feedToken: string;
+  /** The house's name, for the share sheet's title. */
+  houseName: string;
+  /**
+   * What this link does, in the caller's words. It sits between the link and
+   * the way to replace it, so the escape hatch stays last and stays quiet.
+   */
+  children?: React.ReactNode;
 };
 
 /** `.ics` on the end: several clients refuse a subscribe URL without it, and this route takes both. */
@@ -204,7 +311,12 @@ function feedUrl(baseUrl: string, token: string): string {
  * `router.refresh()` to bring it back would leave a dead link on screen for as
  * long as the round trip takes, which is exactly when somebody copies it.
  */
-export function FeedLink({ baseUrl, feedToken }: FeedLinkProps) {
+export function FeedLink({
+  baseUrl,
+  feedToken,
+  houseName,
+  children,
+}: FeedLinkProps) {
   const router = useRouter();
   const [token, setToken] = useState(feedToken);
   const [open, setOpen] = useState(false);
@@ -233,7 +345,15 @@ export function FeedLink({ baseUrl, feedToken }: FeedLinkProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      <CopyLink url={feedUrl(baseUrl, token)} label="Copy calendar link" />
+      <ShareLink
+        url={feedUrl(baseUrl, token)}
+        title={`${houseName} — who is staying`}
+        message="Add this to your calendar and the weeks fill themselves in."
+        sendLabel="Send the calendar link"
+        copyLabel="Copy the calendar link"
+      />
+
+      {children}
 
       <Button
         type="button"
@@ -244,7 +364,7 @@ export function FeedLink({ baseUrl, feedToken }: FeedLinkProps) {
         }}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="h-11 justify-start self-start px-0 text-sm text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
+        className="h-11 justify-start self-start px-0 text-sm font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
       >
         Replace this link
       </Button>
@@ -263,12 +383,11 @@ export function FeedLink({ baseUrl, feedToken }: FeedLinkProps) {
           className="max-h-[92svh] gap-0 overflow-y-auto rounded-t-xl p-0"
         >
           <SheetHeader className="flex-row items-start justify-between gap-2 px-4 pt-4 pb-2">
-            <div className="flex flex-col gap-0.5">
-              <SheetTitle>Replace the calendar link?</SheetTitle>
-              <SheetDescription>
-                Every calendar subscribed to the old link stops updating. Most of
-                them go quiet rather than warn anyone, so hand the new link to
-                whoever was using the old one.
+            <div className="flex flex-col gap-1">
+              <SheetTitle className="text-lg">Replace the calendar link?</SheetTitle>
+              <SheetDescription className="text-sm">
+                Every calendar on the old link stops updating, quietly. Hand the
+                new one to whoever was using it.
               </SheetDescription>
             </div>
             <SheetClose asChild>
@@ -285,7 +404,7 @@ export function FeedLink({ baseUrl, feedToken }: FeedLinkProps) {
 
           <div className="flex flex-col gap-2 px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
             {error ? (
-              <p role="alert" className="text-xs text-destructive">
+              <p role="alert" className="text-sm text-destructive">
                 {error}
               </p>
             ) : null}
@@ -294,9 +413,9 @@ export function FeedLink({ baseUrl, feedToken }: FeedLinkProps) {
               variant="destructive"
               onClick={replace}
               disabled={rotating}
-              className="h-11 w-full text-base"
+              className="h-12 w-full text-base"
             >
-              {rotating ? "Replacing…" : "Replace link"}
+              {rotating ? "Replacing…" : "Replace it"}
             </Button>
           </div>
         </SheetContent>

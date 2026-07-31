@@ -62,7 +62,7 @@ import {
   toStr,
   type DateStr,
 } from "@/lib/dates";
-import { DEFAULT_LANG, dayLabel, t, tn, type Lang } from "@/lib/i18n";
+import { DEFAULT_LANG, humanDay, humanRange, t, tn, type Lang } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /* ============================================================
@@ -136,9 +136,13 @@ const NO_DATES: ReadonlySet<DateStr> = new Set<DateStr>();
  * selection covers it — which is the priority we want.
  */
 const MODIFIER_CLASS_NAMES = {
-  // Taken: a filled neutral, the number struck through and dropped in
-  // contrast. Three signals, none of them colour.
-  taken: "bg-muted [&>button]:text-muted-foreground [&>button]:line-through",
+  // Taken: a fill and a line through the number. `bg-muted` used to do this
+  // and it is 1.5% off the paper — on a phone in daylight the taken nights
+  // were simply invisible. `bg-taken` is --border under another name: still no
+  // hue, but a fill you can actually see. The strike is drawn at a stronger
+  // contrast than the number it crosses out, so "gone" reads before "12th".
+  taken:
+    "bg-taken [&>button]:line-through [&>button]:decoration-2 [&>button]:decoration-foreground/50",
   // Pending: a dashed outline and nothing else. Still tappable, so it must not
   // read as heavier than a free night.
   pending: "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground",
@@ -147,22 +151,48 @@ const MODIFIER_CLASS_NAMES = {
 const CALENDAR_CLASS_NAMES = {
   // shadcn ships `w-fit`; a phone wants the whole column.
   root: "w-full",
-  // shadcn marks today with `bg-muted`, which is the exact fill "taken" uses.
-  // A dot under the number instead: a different shape, not a competing fill.
+  // Tighter than shadcn's `gap-4`: the caption, the weekday row and the grid
+  // are one object, not three stacked panels.
+  month: "flex w-full flex-col gap-1.5",
+  // Caption hard left, the two chevrons hard right. shadcn centres the caption
+  // between them, which is the layout every date picker in every admin panel
+  // has; a month is a title, and titles start at the left margin.
+  nav: "absolute top-0 right-0 flex items-center",
+  month_caption: "flex h-(--cell-size) w-full items-center justify-start pe-24",
+  // The guest's only orientation cue, and it was 15px — the same size as the
+  // hint text under it. Display face, real size, no weight: this is what the
+  // second family is *for*.
+  caption_label: "font-heading text-xl font-normal select-none",
+  weekday: "flex-1 text-xs font-normal text-muted-foreground select-none",
+  // Rows sit flush and are exactly one touch target tall. shadcn's cells are
+  // square, which at 390px makes each row 51px, and `mt-2` added 8 more: a
+  // month came to 354px of mostly air, so half a season needed scrolling.
+  // 44px flush rows give back 90px — most of a sixth week.
+  week: "flex w-full [&>td]:aspect-auto [&>td]:h-(--cell-size)",
+  // shadcn marks today with `bg-muted`, which is a competing fill. A dot under
+  // the number instead: a different shape, not another wash of grey.
   today:
     "after:absolute after:bottom-1 after:left-1/2 after:size-1 after:-translate-x-1/2 after:rounded-full after:bg-foreground",
-  // No `opacity-50`: it would wash out the taken fill until it vanished. Days
-  // outside the season get muted text and no fill, so they read as absent
-  // rather than as booked.
-  disabled: "text-muted-foreground",
+  // "You cannot tap this", said properly. The old rule left the number at
+  // --muted-foreground, the same token that marks ordinary secondary text, so
+  // a dead day and a live one differed by a shade nobody reads as a state.
+  // Ink at 40% is unmistakably off — still legible enough to find the 12th,
+  // never mistakable for something you can press. shadcn's Button also dims
+  // `:disabled` by half, which would compound to invisible, so it is switched
+  // off here and the contrast is set in exactly one place.
+  disabled: "text-foreground/40 [&>button:disabled]:opacity-100",
   // The cell fills and the ±16px bleed shadcn uses to bridge a gutter between
   // cells are dropped: our cells sit flush, so the buttons already form a
   // continuous bar and the bleed would only paint past the ends.
   range_start: "rounded-l-(--cell-radius)",
   range_middle: "rounded-none",
   range_end: "rounded-r-(--cell-radius)",
-  footer: "mt-4 border-t border-border pt-3",
+  footer: "mt-3 w-full border-t border-border pt-3",
   day_button: [
+    // Cells are no longer square, so the button fills the row rather than
+    // forcing it back to its own width. The number gets 17px and a little
+    // weight: it is the content of this screen, not a label on it.
+    "aspect-auto h-(--cell-size) text-base font-medium",
     // THE override. shadcn selects with `bg-primary`, which is the one blue
     // accent this product reserves for the primary action. Selection here is
     // solid black — foreground on background, so it inverts correctly in dark
@@ -214,6 +244,126 @@ export function nextSelection(
     if (taken.has(held)) return startOver;
   }
   return { start: current.start, end };
+}
+
+/**
+ * A season with no end still has to stop somewhere. A year is longer than any
+ * house has ever been booked solid for, and it keeps these scans bounded.
+ */
+const SCAN_LIMIT = 366;
+
+/**
+ * How many free nights a month needs before it is worth opening on.
+ *
+ * A week, because a week is the unit this product is actually about — a cousin
+ * asks for "a week in August", not for a night. A month with fewer than that
+ * left is a month you would immediately swipe past.
+ */
+const MEANINGFUL_NIGHTS = 7;
+
+/** The first selectable night at or after `from`, or `null` if there is none. */
+function findOpenNight(
+  from: DateStr,
+  lastNight: DateStr | null,
+  taken: ReadonlySet<DateStr>,
+): DateStr | null {
+  let night = from;
+  for (let i = 0; i < SCAN_LIMIT; i++) {
+    if (lastNight && compareDates(night, lastNight) > 0) return null;
+    if (!taken.has(night)) return night;
+    night = addDaysStr(night, 1);
+  }
+  return null;
+}
+
+/**
+ * The first night a guest could actually take, at or after `min`.
+ *
+ * Falls back to `min` when the season has nothing left: the guest should still
+ * see where they are, and the copy above the grid says the rest.
+ */
+export function firstOpenNight(
+  min: DateStr,
+  lastNight: DateStr | null,
+  taken: ReadonlySet<DateStr>,
+): DateStr {
+  return findOpenNight(min, lastNight, taken) ?? min;
+}
+
+/** `YYYY-MM` — two nights are in the same month when this matches. */
+function monthOf(day: DateStr): string {
+  return day.slice(0, 7);
+}
+
+function firstOfNextMonth(day: DateStr): DateStr {
+  const year = Number(day.slice(0, 4));
+  const month = Number(day.slice(5, 7));
+  return month === 12
+    ? `${year + 1}-01-01`
+    : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+}
+
+/**
+ * Free nights from `night` to the end of its month. Stops counting at `cap`,
+ * because the only question ever asked is "are there at least this many".
+ */
+function openNightsInMonth(
+  night: DateStr,
+  lastNight: DateStr | null,
+  taken: ReadonlySet<DateStr>,
+  cap: number,
+): number {
+  const month = monthOf(night);
+  let count = 0;
+  let day = night;
+  for (let i = 0; i < 31 && monthOf(day) === month; i++) {
+    if (lastNight && compareDates(day, lastNight) > 0) break;
+    if (!taken.has(day) && ++count >= cap) return count;
+    day = addDaysStr(day, 1);
+  }
+  return count;
+}
+
+/**
+ * The month the calendar opens on — the product's first impression.
+ *
+ * `min` is `bookableWindow().min`, which is **today** once the season has
+ * started, and opening on today's month is how a cousin tapping the link on
+ * 31 July met a July with thirty dead squares and a single live one. Worse,
+ * the house's shortest stay is two nights, so that one square could not even
+ * become a request: the first thing the product showed was a month in which
+ * nothing was possible.
+ *
+ * "The first month containing a selectable night" is not enough on its own —
+ * July *did* contain one. So this asks the stronger question a person is
+ * actually asking: **where do my options begin?** A month is worth opening on
+ * when it still has a week in it. Otherwise skip to the next month that does,
+ * and fall back to the first open night when no month clears the bar (a season
+ * with a fortnight left is still a season, and the guest should see it).
+ *
+ * Navigating back is never blocked — `startMonth` is still `min`, so the
+ * chevron reaches July for anyone who genuinely wants its last night.
+ */
+export function openingNight(
+  min: DateStr,
+  lastNight: DateStr | null,
+  taken: ReadonlySet<DateStr>,
+): DateStr {
+  const first = firstOpenNight(min, lastNight, taken);
+  let night: DateStr | null = first;
+
+  // Twelve hops is a whole year of months; the season ends long before this.
+  for (let i = 0; i < 12 && night; i++) {
+    if (
+      openNightsInMonth(night, lastNight, taken, MEANINGFUL_NIGHTS) >=
+      MEANINGFUL_NIGHTS
+    ) {
+      return night;
+    }
+    night = findOpenNight(firstOfNextMonth(night), lastNight, taken);
+  }
+
+  return first;
 }
 
 /* ============================================================
@@ -304,31 +454,34 @@ export function StayCalendar({
 
   const handleReset = useCallback(() => onChange(null), [onChange]);
 
+  // Read once, on mount — the guest navigates from here on their own.
+  const openMonth = useMemo(
+    () => toDate(value?.start ?? openingNight(min, lastNight, disabledDates)),
+    [value?.start, min, lastNight, disabledDates],
+  );
+
+  // The footer used to be three labelled fields — "Check in", "Check out",
+  // nights — which is a database row with a border on it. A chosen stay is one
+  // thing, so it is said as one line, in the display face, in the words a
+  // person would use out loud: "Tue 18 – Sun 23 Aug · 5 nights".
   let footer;
   if (!value) {
-    footer = <p className="text-sm text-muted-foreground">{t("calendar.empty", language)}</p>;
+    footer = (
+      <p className="text-sm text-muted-foreground">{t("calendar.empty", language)}</p>
+    );
   } else if (value.end == null || chosenLastNight == null) {
     footer = (
       <p className="text-sm text-muted-foreground">
-        {t("calendar.picking", language, { day: dayLabel(value.start, language) })}
+        {t("calendar.picking", language, { day: humanDay(value.start, language) })}
       </p>
     );
   } else {
     footer = (
-      <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-3">
-        <div>
-          <p className="text-xs text-muted-foreground">{t("calendar.checkIn", language)}</p>
-          <p className="text-sm font-medium tabular-nums">
-            {dayLabel(value.start, language)}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">{t("calendar.checkOut", language)}</p>
-          <p className="text-sm font-medium tabular-nums">
-            {dayLabel(value.end, language)}
-          </p>
-        </div>
-        <p className="text-sm font-medium tabular-nums">
+      <div className="flex w-full flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="num font-heading text-lg">
+          {humanRange(value.start, value.end, language)}
+        </p>
+        <p className="num text-sm text-muted-foreground">
           {tn("count.nights", nightsBetween(value.start, value.end), language)}
         </p>
       </div>
@@ -359,7 +512,9 @@ export function StayCalendar({
         showOutsideDays={false}
         startMonth={toDate(min)}
         endMonth={lastNight ? toDate(lastNight) : undefined}
-        defaultMonth={toDate(value?.start ?? min)}
+        // Not `min`: see openingNight. A month you cannot book is not a
+        // month worth opening on.
+        defaultMonth={openMonth}
         footer={footer}
         // 44px: the floor for a touch target, and it sizes the previous and
         // next buttons as well as the day cells.
@@ -371,7 +526,7 @@ export function StayCalendar({
           type="button"
           variant="ghost"
           onClick={handleReset}
-          className="mt-1 h-11 px-3 text-muted-foreground"
+          className="-ms-3 mt-1 h-11 px-3 text-muted-foreground"
         >
           <RotateCcwIcon aria-hidden="true" />
           {t("calendar.startAgain", language)}

@@ -1,28 +1,35 @@
 import type { Metadata } from "next";
+import { ChevronRightIcon } from "lucide-react";
 
 import { requireHouse } from "@/lib/session";
 
 import { encodeQr, qrPathData, qrViewBox } from "./qr";
-import { CopyLink, FeedLink } from "./share-links";
+import { FeedLink, ShareLink } from "./share-links";
 
 export const metadata: Metadata = {
   title: "Share",
 };
 
 /**
- * `/app/share` — the two links, and the difference between them.
+ * `/app/share` — handing out the link, and the one thing worth knowing about
+ * the other one.
  *
- * The screen exists because that difference is not obvious and getting it wrong
- * is the one privacy mistake this product makes easy:
+ * The screen has a single job: get a link into a family group chat. So the
+ * phone's own share sheet is the first thing on it and everything else is
+ * arranged behind that.
  *
- * - **The guest link** lets anyone holding it *ask*. Nothing more. A request
- *   lands on `/app` and waits; a forwarded link costs the owner a decline.
+ * ### Two links, and the difference between them
+ *
+ * - **The house link** lets anyone holding it *ask*. Nothing more. A request
+ *   lands on `/app` and waits; a forwarded link costs the owner one "not that
+ *   week".
  * - **The calendar link** lets anyone holding it *see* — every confirmed stay,
  *   with names on it. It is the closer thing to a password of the two, and it
  *   is the one that looks harmless because it is "just a calendar".
  *
- * So each link says in one sentence what it lets a person do, and the calendar
- * one has a way to replace itself when it reaches somebody it should not have.
+ * That used to be three paragraphs of 15px grey prose explaining itself. It is
+ * now one sentence each, because the distinction is a fact, not a lecture, and
+ * a wall of caveats is how a person learns to skip the words on a screen.
  *
  * ### Where the URLs come from
  *
@@ -32,13 +39,17 @@ export const metadata: Metadata = {
  * calendar quietly pointed at another. One source, so they cannot drift.
  * Setting it is a deploy step; it is in `.env.local` for development.
  *
- * ### The QR code has no dependency behind it
+ * ### The QR code is a third-priority feature and now sits in a third slot
  *
- * `./qr.ts` is the encoder, ~600 lines, verified matrix-for-matrix against a
- * reference implementation. It is here rather than in `package.json` because
- * every QR package on npm brings a canvas renderer or a React wrapper, and this
- * screen needs neither — it needs one `<path>`, server-rendered, no JavaScript
- * shipped to draw it.
+ * It used to be a 208px black square above the fold, ahead of the buttons. It
+ * is genuinely useful — a phone across a table, a fridge door — and almost
+ * never the thing you came here for, so it lives inside a `<details>`. Native
+ * disclosure, no state, no JavaScript shipped to open it.
+ *
+ * The encoder behind it (`./qr.ts`, ~600 lines, verified matrix-for-matrix
+ * against a reference implementation) is here rather than in `package.json`
+ * because every QR package on npm brings a canvas renderer or a React wrapper,
+ * and this screen needs neither — it needs one `<path>`.
  */
 
 const APP_URL = (
@@ -47,9 +58,6 @@ const APP_URL = (
   "http://localhost:3100"
 ).replace(/\/+$/, "");
 
-/** Rendered width of the QR block. Big enough for a second phone across a table. */
-const QR_SIZE_CLASS = "w-52 max-w-full";
-
 export default async function SharePage() {
   const house = await requireHouse();
 
@@ -57,81 +65,73 @@ export default async function SharePage() {
   const qr = encodeQr(guestUrl);
 
   return (
-    <section className="flex flex-1 flex-col gap-8 py-6">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-lg font-semibold tracking-tight">Share</h1>
-        <p className="text-sm text-muted-foreground">
-          Two links, and they do different things. One lets people ask for dates.
-          The other shows who is coming.
+    <div className="flex flex-1 flex-col gap-10 pt-5 pb-4">
+      <h1 className="text-2xl text-balance">Share the house</h1>
+
+      {/* The house link ----------------------------------------------------- */}
+      <section className="flex flex-col gap-4">
+        <ShareLink
+          url={guestUrl}
+          title={house.name}
+          // What lands in the chat. This is the most-read sentence in the whole
+          // product and it is the invitation itself, so it says come and stay
+          // rather than describing a booking system.
+          message="Come and stay — pick the week you want and I will say yes."
+          sendLabel="Send the link"
+          copyLabel="Copy the link"
+          primary
+        />
+
+        <p className="text-base">
+          Anyone with it can ask. Only you say yes.
         </p>
-      </header>
 
-      {/* Guest link --------------------------------------------------------- */}
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-sm font-medium">Guest link</h2>
-          <p className="text-sm text-muted-foreground">
-            Send this to family and friends. They pick dates on their phone and
-            the request lands on your screen.
-          </p>
-        </div>
-
-        <CopyLink url={guestUrl} label="Copy guest link" primary />
-
-        {/* The QR keeps its own black-on-white regardless of the page theme.
-            A scanner expects dark modules on a light field, and a straight
-            neutral inversion in dark mode hands it the negative of that —
-            which many phones read anyway, and some simply do not. */}
-        <figure className="flex flex-col items-center gap-2 pt-1">
+        {/* Useful, occasionally, and never the reason anyone opened this. */}
+        <details className="group">
+          <summary className="flex min-h-11 list-none items-center gap-1.5 text-sm text-muted-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRightIcon
+              className="size-4 transition-transform group-open:rotate-90"
+              aria-hidden="true"
+            />
+            QR code
+          </summary>
+          {/* Black on white whatever the page theme is. A scanner expects dark
+              modules on a light field, and a straight neutral inversion in dark
+              mode hands it the negative of that — which many phones read
+              anyway, and some simply do not. */}
           <svg
             viewBox={qrViewBox(qr)}
-            className={`${QR_SIZE_CLASS} rounded-lg border border-border`}
+            className="mt-2 w-52 max-w-full rounded-lg border border-border"
             shapeRendering="crispEdges"
             role="img"
-            aria-label="QR code for the guest link"
+            aria-label="QR code for the house link"
           >
             <rect width="100%" height="100%" fill="#ffffff" />
             <path d={qrPathData(qr)} fill="#0a0a0a" />
           </svg>
-          <figcaption className="text-center text-xs text-muted-foreground">
-            Point a camera at this to open the same page.
-          </figcaption>
-        </figure>
-
-        <p className="text-sm text-muted-foreground">
-          Anyone with this link can <strong className="font-medium text-foreground">ask</strong>.
-          Only you confirm, so a link that gets forwarded costs you a request to
-          decline and nothing else.
-        </p>
+        </details>
       </section>
 
-      {/* Calendar feed ------------------------------------------------------ */}
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-sm font-medium">Calendar link</h2>
-          <p className="text-sm text-muted-foreground">
-            Add this in Apple Calendar, Outlook, or Google Calendar and every
-            confirmed stay shows up in the calendar you already use — your own
-            blocked dates too. It updates on its own; nothing to install.
-          </p>
-        </div>
+      {/* The calendar link -------------------------------------------------- */}
+      <section className="flex flex-col gap-4">
+        <h2 className="text-lg">Your calendar</h2>
 
-        <FeedLink baseUrl={APP_URL} feedToken={house.feedToken} />
-
-        <p className="text-sm text-muted-foreground">
-          Anyone with this link can{" "}
-          <strong className="font-medium text-foreground">see who is staying</strong>{" "}
-          and when. That is the difference: the guest link lets people ask, this
-          one lets them look.
-        </p>
-
-        <p className="text-sm text-muted-foreground">
-          Google refreshes calendars it does not own on its own schedule — hours,
-          not minutes. A stay you approved a minute ago will not be there yet,
-          and that is Google, not a broken link. Apple and Outlook check about
-          once an hour.
-        </p>
+        <FeedLink
+          baseUrl={APP_URL}
+          feedToken={house.feedToken}
+          houseName={house.name}
+        >
+          <div className="flex flex-col gap-2">
+            <p className="text-base">
+              Anyone with this one can see who is staying and when.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Calendars refresh on their own schedule. A stay you said yes to a
+              minute ago can take a few hours to appear.
+            </p>
+          </div>
+        </FeedLink>
       </section>
-    </section>
+    </div>
   );
 }
