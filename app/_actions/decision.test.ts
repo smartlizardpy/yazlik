@@ -193,6 +193,7 @@ const PENDING: Booking = {
   token: "guesttoken123456",
   googleEventId: null,
   googleSync: "none",
+  importedFromGoogle: false,
   createdAt: new Date("2026-05-01T00:00:00Z"),
   decidedAt: null,
 };

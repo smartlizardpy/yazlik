@@ -250,6 +250,15 @@ function googleFake(options: { calendar?: boolean } = {}): GoogleFake {
     async listEvents(calendarId: string, window: EventWindow) {
       reads.push({ operation: "listEvents", calendarId, window });
       if (listFailure !== undefined) throw listFailure;
+      // Only calendars the fake actually has answer. A house still pointing at
+      // one the owner deleted gets the 404 Google would send.
+      if (!calendar.calendar(calendarId)) {
+        throw new GoogleCalendarError("notFound", `Fake Google: no calendar ${calendarId}.`, {
+          status: 404,
+          reason: "notFound",
+          operation: "listEvents",
+        });
+      }
       return feed.map((event) => ({ ...event }));
     },
   };
@@ -337,6 +346,7 @@ const STAY: Booking = {
   token: "guesttoken123456",
   googleEventId: null,
   googleSync: "none",
+  importedFromGoogle: false,
   createdAt: new Date("2026-05-01T00:00:00Z"),
   decidedAt: new Date("2026-05-02T00:00:00Z"),
 };
@@ -357,6 +367,8 @@ const IMPORTED_BLOCK: Booking = booking({
   token: "blocktoken123456",
   googleEventId: "evt-cousin",
   googleSync: "synced",
+  // This block came out of Google, which is what lets the pull lift it again.
+  importedFromGoogle: true,
 });
 
 const SCOPE = CALENDAR_SYNC_SCOPES.join(" ");
@@ -436,7 +448,9 @@ const NOTHING_PULLED = {
   updated: 0,
   removed: 0,
   skipped: 0,
+  failed: 0,
   ignoredTimed: 0,
+  ignoredUnusable: 0,
   ignoredRepeating: 0,
 };
 
@@ -890,6 +904,7 @@ describe("a stay that is no longer held", () => {
 
     expect(outcome).toEqual({ state: "none", reason: "nothing-to-do" });
     expect(google.calls()).toBe(0);
+    // The row already reads 'none', so there is nothing to write down either.
     expect(dbOps("update")).toHaveLength(0);
   });
 });
@@ -1021,26 +1036,40 @@ describe("a failure while syncing", () => {
     expect(errors).toHaveBeenCalled();
   });
 
-  // FINDING: `record()` swallows its own failure, so a booking can be reported
-  // `'synced'` when the database never learned the event id. The row still
-  // reads `googleEventId: null`, so the next sync inserts a *second* event and
-  // the first is orphaned on the owner's calendar forever — nothing in the app
-  // holds its id, so no cancellation can ever remove it. The outcome the caller
-  // is handed says `'synced'` both times.
-  it("FINDING: an event id that could not be written back leaves an orphan on the calendar", async () => {
+  it("is not reported synced when the event id could not be written back", async () => {
+    // The id is the only thread back to the event: a row that does not hold it
+    // can never patch or delete it again. So the event is taken back off the
+    // calendar rather than orphaned there, and the caller is told the truth.
     linked();
     fake.queue("update", { error: new Error("connection terminated unexpectedly") });
     const google = googleFake();
 
     const first = await syncBooking(booking(), HOUSE, deps(google));
-    expect(first).toEqual({ state: "synced", eventId: "fakeevent1" });
 
-    // The row was never told about fakeevent1, so it is still a stay with no event.
+    expect(first).toEqual({ state: "failed", kind: "other", stop: false });
+    expect(google.calendar.callsTo("deleteEvent")).toHaveLength(1);
+    expect(google.calendar.events(CALENDAR_ID)).toHaveLength(0);
+    expect(errors).toHaveBeenCalled();
+  });
+
+  it("leaves exactly one event behind once the write-back finally lands", async () => {
+    linked();
+    fake.queue("update", { error: new Error("connection terminated unexpectedly") });
+    const google = googleFake();
+
+    await syncBooking(booking(), HOUSE, deps(google));
+
+    // The row is still a stay with no event, so the retry inserts one — and
+    // there is no first event left for it to sit beside.
     linked();
     const second = await syncBooking(booking(), HOUSE, deps(google));
 
     expect(second).toEqual({ state: "synced", eventId: "fakeevent2" });
-    expect(google.calendar.events(CALENDAR_ID)).toHaveLength(2);
+    expect(google.calendar.events(CALENDAR_ID)).toHaveLength(1);
+    expect(dbOps("update", bookings).at(-1)?.set).toEqual({
+      googleEventId: "fakeevent2",
+      googleSync: "synced",
+    });
   });
 
   it("does not throw when the client cannot even be built", async () => {
@@ -1122,18 +1151,72 @@ describe("a calendar the owner deleted by hand in Google", () => {
     expect(failed).toHaveLength(0);
   });
 
-  // FINDING: only an insert notices that the calendar has gone. A removal
-  // against a calendar that no longer exists reads the 404 as "the event is
-  // already gone", reports success, and leaves `houses.googleCalendarId`
-  // pointing at a calendar that does not exist. Nothing is lost — the next
-  // confirmed stay's insert clears it — but until then the house looks
-  // connected and every pull fails at `listEvents` instead.
-  it("FINDING: is not noticed by a removal, which reads the 404 as 'already gone'", async () => {
+  it("is noticed by a removal too, not only by an insert", async () => {
+    // A 404 from a delete names two things at once — the event, and the
+    // calendar it was on. Reading it as "the event is already gone" leaves the
+    // house pointing at a calendar that does not exist, and every pull after
+    // that fails at `listEvents` instead. So it asks which one is missing.
     linked();
     const google = googleFake({ calendar: false });
 
     const outcome = await syncRemovedBooking(
       booking({ googleEventId: "fakeevent1" }),
+      HOUSE,
+      deps(google),
+    );
+
+    expect(outcome).toEqual({ state: "none", reason: "calendar-gone" });
+    // One day is enough to ask "is this calendar still there?", and the
+    // booking's own start day means the question needs no clock.
+    expect(google.reads).toEqual([
+      {
+        operation: "listEvents",
+        calendarId: CALENDAR_ID,
+        window: { from: "2026-08-04", to: "2026-08-05" },
+      },
+    ]);
+    expect(dbOps("update", houses)[0].set).toEqual({ googleCalendarId: null });
+  });
+
+  it("is not asked about at all when the event was merely deleted already", async () => {
+    // 410 Gone is Google answering *for* the event, which means the calendar
+    // was there to answer. Nothing to check and nothing to forget.
+    linked();
+    const google = googleFake();
+    google.calendar.seedEvent(
+      CALENDAR_ID,
+      { summary: "x", start: "2026-08-04", end: "2026-08-10" },
+      "fakeevent1",
+    );
+    await google.calendar.deleteEvent(CALENDAR_ID, "fakeevent1");
+
+    const outcome = await syncRemovedBooking(
+      booking({ status: "cancelled", googleEventId: "fakeevent1" }),
+      HOUSE,
+      deps(google),
+    );
+
+    expect(outcome).toEqual({ state: "none", reason: "removed" });
+    expect(google.reads).toHaveLength(0);
+    expect(dbOps("update", houses)).toHaveLength(0);
+  });
+
+  it("is not forgotten when the question could not be put to Google at all", async () => {
+    // The event id is stale and the calendar is fine, but the check that would
+    // say so is rate limited. Disconnecting a house over a blip would be far
+    // worse than leaving one stale id for one more pass.
+    linked();
+    const google = googleFake();
+    google.failListEvents(
+      new GoogleCalendarError("rateLimit", "too many calls", {
+        status: 403,
+        reason: "rateLimitExceeded",
+        operation: "listEvents",
+      }),
+    );
+
+    const outcome = await syncRemovedBooking(
+      booking({ status: "cancelled", googleEventId: "fakeevent9" }),
       HOUSE,
       deps(google),
     );
@@ -1292,11 +1375,9 @@ describe("a timed event", () => {
     expect(dbOps("insert", bookings)[0].values?.googleEventId).toBe("evt-cousin");
   });
 
-  // FINDING: `ignoredTimed` counts everything `allDayRange` refuses, not only
-  // events with a time of day. An all-day event Google returned with a broken
-  // or zero-night range is reported as "ignored, it had a time on it", which is
-  // a lie in the one log line an owner or a developer would go looking at.
-  it("FINDING: shares its counter with an all-day event that covers no nights", async () => {
+  it("does not share its counter with an all-day event that covers no nights", async () => {
+    // "It had a time on it" and "its dates made no sense" are different things
+    // to explain, and this counter is the one line anybody goes looking at.
     linked();
     knownRows([]);
     const google = googleFake();
@@ -1304,8 +1385,7 @@ describe("a timed event", () => {
 
     const result = await pullBlocks(HOUSE, deps(google));
 
-    expect(result.ignoredTimed).toBe(1);
-    expect(result.imported).toBe(0);
+    expect(result).toEqual({ ...NOTHING_PULLED, state: "synced", ignoredUnusable: 1 });
   });
 });
 
@@ -1386,12 +1466,10 @@ describe("an event that has already been imported", () => {
     expect(dbOps("insert")).toHaveLength(0);
   });
 
-  // FINDING: only the dates are compared and only the dates are written, so a
-  // week the owner renames in Google keeps the note it was imported with. The
-  // note is the whole reason the title is copied across — "Ayşe teyze" is how
-  // the owner recognises the week — and it goes stale the first time they tidy
-  // up a title.
-  it("FINDING: keeps the note it was imported with after the owner renames it in Google", async () => {
+  it("takes the new title when the owner renames it in Google", async () => {
+    // The note is the whole reason the title is copied across — "Ayşe teyze" is
+    // how the owner recognises the week — so it must not go stale the first
+    // time they tidy one up.
     linked();
     knownRows([IMPORTED_BLOCK]);
     const google = googleFake();
@@ -1399,8 +1477,12 @@ describe("an event that has already been imported", () => {
 
     const result = await pullBlocks(HOUSE, deps(google));
 
-    expect(result).toEqual({ ...NOTHING_PULLED, state: "synced" });
-    expect(dbOps("update")).toHaveLength(0);
+    expect(result).toEqual({ ...NOTHING_PULLED, state: "synced", updated: 1 });
+
+    const renamed = dbOps("update", bookings)[0];
+    // The week did not move, so its dates are not written.
+    expect(renamed.set).toEqual({ note: "Ayşe teyze ve ailesi" });
+    expect(whereValues(renamed)).toEqual([BLOCK_ID, "block"]);
   });
 
   it("leaves a guest's stay alone even when its event moved in Google", async () => {
@@ -1495,12 +1577,7 @@ describe("an event that would sit on top of a confirmed stay", () => {
     expect(attempts[1].values?.token).not.toBe(attempts[0].values?.token);
   });
 
-  // FINDING: an insert that fails for any other reason — a dropped connection,
-  // a column that does not exist — is counted in nothing. The pull returns
-  // `state: 'synced'` with `imported: 0, skipped: 0` and reads exactly like a
-  // calendar with nothing new on it, so a week that silently failed to import
-  // is invisible in the result. Only the server log knows.
-  it("FINDING: an unrelated database fault swallows the event without counting it", async () => {
+  it("counts a week an unrelated database fault swallowed, rather than losing it in silence", async () => {
     linked();
     knownRows([]);
     const google = googleFake();
@@ -1512,12 +1589,22 @@ describe("an event that would sit on top of a confirmed stay", () => {
 
     const result = await pullBlocks(HOUSE, deps(google));
 
-    // The pass carries on, which is right — but nothing in the result says a
-    // week was lost.
-    expect(result.imported).toBe(1);
-    expect(result.skipped).toBe(0);
-    expect(result.state).toBe("synced");
+    // The pass carries on — and says a week did not make it, so the result
+    // cannot be mistaken for a calendar with nothing new on it.
+    expect(result).toEqual({ ...NOTHING_PULLED, state: "synced", imported: 1, failed: 1 });
     expect(errors).toHaveBeenCalled();
+  });
+
+  it("counts a block whose week moved in Google and could not be moved here", async () => {
+    linked();
+    knownRows([IMPORTED_BLOCK]);
+    const google = googleFake();
+    google.setEvents([allDay("evt-cousin", "2026-08-08", "2026-08-15", "Ayşe teyze")]);
+    fake.queue("update", { error: new Error("deadlock detected") });
+
+    const result = await pullBlocks(HOUSE, deps(google));
+
+    expect(result).toEqual({ ...NOTHING_PULLED, state: "synced", failed: 1 });
   });
 });
 
@@ -1622,18 +1709,18 @@ describe("an imported week that is deleted in Google", () => {
 
     expect(result.state).toBe("synced");
     expect(result.removed).toBe(0);
+    // Counted, not silently dropped: the block is still on the guest page.
+    expect(result.failed).toBe(1);
     expect(errors).toHaveBeenCalled();
   });
 
-  // FINDING: `googleEventId` marks two different things — "this block was
-  // imported from Google" and "this block was pushed to Google". A block the
-  // owner made in the app is pushed on approval and comes back carrying an
-  // event id, so from the next pull's point of view it is indistinguishable
-  // from an imported one. An owner who deletes that event in their calendar
-  // loses the block they made in the app. A dedicated column (or an id prefix)
-  // is what would separate the two; `db/schema.ts` was not this slice's to
-  // change, and `sync.ts` says as much in its own docstring.
-  it("FINDING: also lifts a block the owner made in the app once it has been pushed to Google", async () => {
+  // `googleEventId` alone cannot answer "did this come from Google?" — a block
+  // the owner made in the app is pushed on approval and comes back carrying an
+  // event id, which makes it identical on the row to an imported one. Deleting
+  // that event in Google used to lift the owner's own block with it. The
+  // `importedFromGoogle` column is what separates the two, and the removal loop
+  // requires it.
+  it("leaves a block the owner made in the app, even once it has been pushed to Google", async () => {
     linked();
     knownRows([
       booking({
@@ -1642,9 +1729,10 @@ describe("an imported week that is deleted in Google", () => {
         note: "Roof repair",
         startDate: "2026-08-20",
         endDate: "2026-08-25",
-        // Written by push(), not by an import.
+        // Written by push(), not by an import — so the marker stays false.
         googleEventId: "fakeevent1",
         googleSync: "synced",
+        importedFromGoogle: false,
       }),
     ]);
     const google = googleFake();
@@ -1652,9 +1740,8 @@ describe("an imported week that is deleted in Google", () => {
 
     const result = await pullBlocks(HOUSE, deps(google));
 
-    // Should be 0 — the owner made this block in the app.
-    expect(result.removed).toBe(1);
-    expect(dbOps("delete", bookings)).toHaveLength(1);
+    expect(result.removed).toBe(0);
+    expect(dbOps("delete", bookings)).toHaveLength(0);
   });
 });
 
@@ -1916,14 +2003,12 @@ describe("coming back for rows Google refused earlier", () => {
     });
   });
 
-  // FINDING: a row that turns out to need no event at all — a stay cancelled
-  // before it ever reached Google — is counted as `cleared` but nothing is
-  // written, so `googleSync` stays `'failed'`. The next pass selects it again,
-  // and the one after that, forever. Worse, the query is `limit`ed and ordered
-  // by `createdAt`, so twenty such rows fill every slot in the pass and no real
-  // failure is ever retried again. The fix is one line: record
-  // `{ googleSync: 'none' }` on the `nothing-to-do` path in `push`.
-  it("FINDING: counts a row that needs no event as cleared, but leaves it failed forever", async () => {
+  it("writes down that a row needs no event, so it leaves the queue for good", async () => {
+    // A stay cancelled before it ever reached Google needs nothing doing — but
+    // if that is never recorded the row stays `'failed'` and the next pass
+    // selects it again, and the one after that. The query is `limit`ed and
+    // ordered by `createdAt`, so twenty such rows would fill every slot and no
+    // real failure would ever be retried again.
     fake.queue("select", {
       rows: [failedRow({ status: "cancelled", googleEventId: null })],
     });
@@ -1933,24 +2018,25 @@ describe("coming back for rows Google refused earlier", () => {
     const result = await retryFailedSyncs(20, deps(google));
 
     expect(result).toEqual({ attempted: 1, synced: 0, cleared: 1, failed: 0, stopped: false });
-    // Nothing at all was written: the row still reads 'failed'.
-    expect(dbOps("update")).toHaveLength(0);
+
+    const written = dbOps("update", bookings)[0];
+    expect(written.set).toEqual({ googleSync: "none" });
+    expect(whereValues(written)).toEqual([BOOKING_ID]);
+    // Still nothing was asked of Google — there was nothing to ask.
     expect(google.calls()).toBe(0);
   });
 
-  // FINDING: one owner's dead token ends the whole pass, not just their house.
-  // `result.stopped` is checked in the outer loop as well as the inner one, so
-  // a second house — a different owner, a different grant, quite possibly
-  // working perfectly — is never even looked at, and stays unsynced until the
-  // first owner reconnects. Breaking that house's queue is right; breaking
-  // everybody's is not. The docstring says "stops that house's batch".
-  it("FINDING: lets one owner's dead token stop every other house in the pass", async () => {
+  it("stops one owner's batch on a dead token and carries on to the next house", async () => {
+    // A revoked grant belongs to one owner. Breaking their queue is right;
+    // breaking everybody's — a different owner, a different grant, quite
+    // possibly working perfectly — is not.
+    const OTHER_CALENDAR = "second-owner@group.calendar.google.com";
     const OTHER_HOUSE: House = {
       ...HOUSE,
       id: OTHER_HOUSE_ID,
       ownerId: "99999999-9999-4999-8999-999999999999",
       slug: "summerhouse02",
-      googleCalendarId: "second-owner@group.calendar.google.com",
+      googleCalendarId: OTHER_CALENDAR,
     };
     fake.queue("select", {
       rows: [
@@ -1959,18 +2045,22 @@ describe("coming back for rows Google refused earlier", () => {
       ],
     });
     linked();
+    linked();
     const google = googleFake();
-    google.calendar.fail("insertEvent", "auth");
+    google.calendar.seedCalendar({ calendarId: OTHER_CALENDAR, summary: "İkinci ev" });
+    // Only the first owner's token is dead.
+    google.calendar.failOnce("insertEvent", "auth");
 
     const result = await retryFailedSyncs(20, deps(google));
 
-    expect(result.stopped).toBe(true);
-    expect(result.attempted).toBe(1);
-    // The second owner's account was never even read: one row query, one
-    // account read, and then the pass gave up.
-    expect(dbOps("select")).toHaveLength(2);
-    expect(google.tokensSeen).toHaveLength(1);
+    expect(result).toEqual({ attempted: 2, synced: 1, cleared: 0, failed: 1, stopped: true });
+    // The second owner's account was read and their stay landed.
+    expect(google.tokensSeen).toHaveLength(2);
+    expect(dbOps("select")).toHaveLength(3);
+    expect(google.calendar.events(CALENDAR_ID)).toHaveLength(0);
+    expect(google.calendar.events(OTHER_CALENDAR)).toHaveLength(1);
   });
+
 });
 
 /* ============================================================

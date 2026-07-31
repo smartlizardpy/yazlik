@@ -136,6 +136,17 @@ export const bookings = pgTable(
     googleEventId: text("google_event_id"),
     googleSync: googleSyncStatus("google_sync").notNull().default("none"),
 
+    /**
+     * True only for a block this app created by reading an event out of Google.
+     *
+     * `googleEventId` cannot answer this: a block the owner made in the app also
+     * gets an event id the moment it is pushed out, so the two are byte-identical
+     * on the row. Without this column, deleting that event in Google made the
+     * pull remove a block the owner had made by hand — silent data loss, and the
+     * pull's removal loop requires this flag because of it.
+     */
+    importedFromGoogle: boolean("imported_from_google").notNull().default(false),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
     decidedAt: timestamp("decided_at"),
   },

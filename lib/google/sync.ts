@@ -46,7 +46,8 @@
  *
  * - **`auth`** — the refresh token is dead or was revoked. Retrying cannot help
  *   and hammering Google with a dead grant is how an OAuth client gets
- *   throttled. The row is marked `'failed'` and the batch stops.
+ *   throttled. The row is marked `'failed'` and that owner's batch stops — the
+ *   pass carries on to the next house, whose grant is somebody else's.
  * - **`notFound` on the calendar** — the owner deleted it by hand in the Google
  *   UI. `houses.googleCalendarId` is cleared so the next sync starts over from
  *   "not connected" instead of failing identically forever.
@@ -385,14 +386,27 @@ export type PullResult = {
   state: SyncState;
   /** Foreign all-day events that became new blocks. */
   imported: number;
-  /** Imported blocks whose dates moved in Google. */
+  /** Imported blocks whose dates or title moved in Google. */
   updated: number;
   /** Blocks whose event is gone from the calendar, so the block went too. */
   removed: number;
   /** Events refused by `bookings_no_overlap` — they would have eaten a confirmed stay. */
   skipped: number;
+  /**
+   * Weeks this pass lost: an event that should have become — or moved, or
+   * lifted — a block, and could not be written for a reason that is nobody's
+   * decision. A dropped connection, a deadlock. Without this, a pull that
+   * silently lost a week reads exactly like a calendar with nothing new on it.
+   */
+  failed: number;
   /** Events with a time of day. Not somebody staying in the house. */
   ignoredTimed: number;
+  /**
+   * All-day events carrying a range this app cannot use: no nights in it, or a
+   * day that does not exist. Counted apart from {@link ignoredTimed}, because
+   * "it had a time on it" is a different thing to explain to an owner.
+   */
+  ignoredUnusable: number;
   /** Instances of a repeating event — a birthday, not a fortnight in August. */
   ignoredRepeating: number;
   kind?: GoogleErrorKind;
@@ -406,7 +420,10 @@ export type RetryResult = {
   /** Rows that turned out to need no event after all. */
   cleared: number;
   failed: number;
-  /** True when an `auth` failure cut the pass short. */
+  /**
+   * True when an `auth` failure cut a house's batch short. The pass carries on
+   * to the next house: a revoked grant belongs to one owner, not to the cron.
+   */
   stopped: boolean;
 };
 
@@ -639,12 +656,20 @@ function hasPgCode(error: unknown, code: string): boolean {
   return false;
 }
 
-/** Writing the sync state must never be the thing that throws. */
-async function record(bookingId: string, patch: Partial<Booking>): Promise<void> {
+/**
+ * Writing the sync state must never be the thing that throws.
+ *
+ * Returns whether the write landed, because for one caller that is the
+ * difference between a success and a lie: an event whose id was never stored is
+ * an event the app can never patch, delete, or find again. See {@link push}.
+ */
+async function record(bookingId: string, patch: Partial<Booking>): Promise<boolean> {
   try {
     await db.update(bookings).set(patch).where(eq(bookings.id, bookingId));
+    return true;
   } catch (error) {
     console.error("[sync] could not record sync state", error);
+    return false;
   }
 }
 
@@ -707,6 +732,46 @@ type PushOptions = {
   remove?: boolean;
 };
 
+/**
+ * A `404` from `events.delete` names two things at once — the event, and the
+ * calendar it was on. Ask Google which of the two went missing.
+ *
+ * One `events.list` over a single day is the cheapest question this client can
+ * put, and it is only ever asked on that ambiguous 404. Anything other than
+ * `notFound` coming back is treated as "the calendar is there": a rate limit or
+ * a dead token says nothing about whether it exists, and disconnecting a house
+ * over a blip would be far worse than leaving a stale id one more pass.
+ */
+async function calendarIsGone(
+  connection: Connection,
+  calendarId: string,
+  day: DateStr,
+): Promise<boolean> {
+  try {
+    await connection.client.listEvents(calendarId, { from: day, to: addDaysStr(day, 1) });
+    return false;
+  } catch (error) {
+    return asGoogleError(error, "listEvents").kind === "notFound";
+  }
+}
+
+/**
+ * The event was created but its id could not be stored. Take it back off the
+ * calendar.
+ *
+ * A row that does not hold the id can never patch or delete that event again,
+ * so leaving it there orphans it on the owner's calendar forever — and the next
+ * pass, seeing a row with no event, would insert a second one beside it.
+ * Best effort: if this fails too, the log is all that is left.
+ */
+async function unwind(connection: Connection, calendarId: string, eventId: string): Promise<void> {
+  try {
+    await connection.client.deleteEvent(calendarId, eventId);
+  } catch (error) {
+    console.error(`[sync] could not take back event ${eventId}`, error);
+  }
+}
+
 async function fail(
   booking: Booking,
   error: GoogleCalendarError,
@@ -743,7 +808,15 @@ async function push(
   /* --- the dates are not held any more --- */
 
   if (!wanted) {
-    if (!eventId) return { state: "none", reason: "nothing-to-do" };
+    if (!eventId) {
+      // Nothing to take off the calendar — but the row may be sitting in the
+      // retry queue from an earlier failure, and a row that needs no event is
+      // never going to leave that queue on its own. Say so, once.
+      if (rowExists && booking.googleSync !== "none") {
+        await record(booking.id, { googleSync: "none" });
+      }
+      return { state: "none", reason: "nothing-to-do" };
+    }
     try {
       await connection.client.deleteEvent(calendarId, eventId);
     } catch (error) {
@@ -751,32 +824,56 @@ async function push(
       // A delete that fails because the event is already gone has, in every
       // sense that matters, succeeded.
       if (failure.kind !== "notFound") return fail(booking, failure, rowExists);
+      // `410 Gone` is Google answering *for* the event: it was there, it is not
+      // now, and the calendar is plainly still around to say so. A plain 404
+      // does not say which of the two is missing, so ask before believing it.
+      if (
+        failure.status !== 410 &&
+        (await calendarIsGone(connection, calendarId, booking.startDate))
+      ) {
+        await forgetCalendar(house.id);
+        return { state: "none", reason: "calendar-gone" };
+      }
     }
-    if (rowExists) await record(booking.id, { googleEventId: null, googleSync: "none" });
+    if (rowExists) {
+      // A lost write here is survivable and deliberately not reported as a
+      // failure: the event is off the calendar, and a row left holding its id
+      // only ever produces one more delete that answers "already gone".
+      await record(booking.id, { googleEventId: null, googleSync: "none" });
+    }
     return { state: "none", reason: "removed" };
   }
 
   /* --- it already has an event: move it rather than make a second one --- */
 
   if (eventId) {
+    let moved = false;
     try {
       await connection.client.patchEvent(calendarId, eventId, eventFor(house, booking));
-      if (rowExists) await record(booking.id, { googleSync: "synced" });
-      return { state: "synced", eventId };
+      moved = true;
     } catch (error) {
       const failure = asGoogleError(error, "patchEvent");
       // Anything but `notFound` is a real failure. `notFound` means the owner
       // deleted the event by hand, and the honest repair is to put it back.
       if (failure.kind !== "notFound") return fail(booking, failure, rowExists);
     }
+
+    if (moved) {
+      // The row still holds the right id either way, so nothing is orphaned —
+      // but it also still reads `'failed'`, and a caller told `'synced'` would
+      // be told something the database does not agree with.
+      if (rowExists && !(await record(booking.id, { googleSync: "synced" }))) {
+        return { state: "failed", kind: "other", stop: false };
+      }
+      return { state: "synced", eventId };
+    }
   }
 
   /* --- no event yet, or the old one is gone --- */
 
+  let created: { eventId: string };
   try {
-    const created = await connection.client.insertEvent(calendarId, eventFor(house, booking));
-    if (rowExists) await record(booking.id, { googleEventId: created.eventId, googleSync: "synced" });
-    return { state: "synced", eventId: created.eventId };
+    created = await connection.client.insertEvent(calendarId, eventFor(house, booking));
   } catch (error) {
     const failure = asGoogleError(error, "insertEvent");
     if (failure.kind === "notFound") {
@@ -786,6 +883,15 @@ async function push(
     }
     return fail(booking, failure, rowExists);
   }
+
+  // The id is the only thread back to this event. An operation whose id was
+  // never written down has not succeeded, whatever the calendar now shows.
+  if (rowExists && !(await record(booking.id, { googleEventId: created.eventId, googleSync: "synced" }))) {
+    await unwind(connection, calendarId, created.eventId);
+    return { state: "failed", kind: "other", stop: false };
+  }
+
+  return { state: "synced", eventId: created.eventId };
 }
 
 /**
@@ -879,11 +985,18 @@ function overlapsWindow(row: Booking, window: EventWindow): boolean {
  * There is deliberately no code path where an event from a calendar can delete a
  * `kind: 'guest'` row.
  *
- * ### How a block knows it came from Google
+ * ### How a block knows it came from Google, and where that is still thin
  *
- * By carrying a `googleEventId` on a `kind: 'block'` row. `db/schema.ts` was not
- * this slice's to change, so there is no dedicated column — see the report that
- * accompanied this file for exactly where that marker is thin.
+ * By carrying a `googleEventId` on a `kind: 'block'` row — and that marker means
+ * two different things. {@link push} writes the same column when a block the
+ * owner made **in the app** is sent out to the calendar, so from the removal
+ * loop's point of view the two are identical, and an owner who deletes that
+ * event in Google loses the block they made here.
+ *
+ * The fix is a column of its own — `bookings.imported_from_google`, set on
+ * import and required by the removal loop — which `db/schema.ts` does not have
+ * yet. It is a one-line schema change plus one line in every fixture built from
+ * `Booking`, including one in `app/_actions/decision.test.ts`.
  *
  * Never throws.
  */
@@ -894,7 +1007,9 @@ export async function pullBlocks(house: House, deps: SyncDeps = {}): Promise<Pul
     updated: 0,
     removed: 0,
     skipped: 0,
+    failed: 0,
     ignoredTimed: 0,
+    ignoredUnusable: 0,
     ignoredRepeating: 0,
   };
 
@@ -936,8 +1051,11 @@ export async function pullBlocks(house: House, deps: SyncDeps = {}): Promise<Pul
       }
       const range = allDayRange(event);
       if (!range) {
-        // A time of day. Somebody's meeting, not somebody's summer.
-        result.ignoredTimed++;
+        // A time of day is somebody's meeting, not somebody's summer — and it
+        // is the reason this filter exists, so it is counted as itself rather
+        // than lumped in with an all-day event whose range made no sense.
+        if (event.start?.dateTime || event.end?.dateTime) result.ignoredTimed++;
+        else result.ignoredUnusable++;
         continue;
       }
       importable.set(id, { ...range, summary: event.summary ?? null });
@@ -964,18 +1082,30 @@ export async function pullBlocks(house: House, deps: SyncDeps = {}): Promise<Pul
         const inserted = await importBlock(house.id, eventId, event);
         if (inserted === "ok") result.imported++;
         else if (inserted === "overlap") result.skipped++;
+        else result.failed++;
         continue;
       }
 
       // A row we pushed for a guest's stay. Google is not the authority on those.
       if (existing.kind !== "block") continue;
 
-      if (existing.startDate === event.start && existing.endDate === event.end) continue;
+      // Only what actually changed is written, so an owner who moved a week and
+      // an owner who tidied up its title are two different statements.
+      const patch: Partial<Booking> = {};
+      if (existing.startDate !== event.start || existing.endDate !== event.end) {
+        patch.startDate = event.start;
+        patch.endDate = event.end;
+      }
+      const note = noteFrom(event.summary);
+      // The title is the whole reason it was copied across — "Ayşe teyze" is how
+      // the owner recognises the week — so it follows the rename.
+      if (existing.note !== note) patch.note = note;
+      if (Object.keys(patch).length === 0) continue;
 
       try {
         await db
           .update(bookings)
-          .set({ startDate: event.start, endDate: event.end })
+          .set(patch)
           .where(and(eq(bookings.id, existing.id), eq(bookings.kind, "block")));
         result.updated++;
       } catch (error) {
@@ -984,6 +1114,7 @@ export async function pullBlocks(house: House, deps: SyncDeps = {}): Promise<Pul
           continue;
         }
         console.error(`[sync] could not move block ${existing.id}`, error);
+        result.failed++;
       }
     }
 
@@ -991,6 +1122,11 @@ export async function pullBlocks(house: House, deps: SyncDeps = {}): Promise<Pul
 
     for (const row of known) {
       if (row.kind !== "block") continue;
+      // Only blocks that CAME FROM Google. A block the owner made in the app is
+      // also given an event id the moment it is pushed out, so `googleEventId`
+      // alone cannot tell the two apart — and deleting that event in Google
+      // would then lift a block the owner made by hand.
+      if (!row.importedFromGoogle) continue;
       if (!row.googleEventId) continue;
       if (importable.has(row.googleEventId)) continue;
       // Only rows the pull actually asked Google about. A block next August is
@@ -1004,6 +1140,7 @@ export async function pullBlocks(house: House, deps: SyncDeps = {}): Promise<Pul
         result.removed++;
       } catch (error) {
         console.error(`[sync] could not lift block ${row.id}`, error);
+        result.failed++;
       }
     }
 
@@ -1015,17 +1152,29 @@ export async function pullBlocks(house: House, deps: SyncDeps = {}): Promise<Pul
 }
 
 /**
+ * The event's own title, as a block's note.
+ *
+ * So the owner opening the app reads "Ayşe teyze" and recognises the week
+ * rather than wondering who took it. Bounded, because `note` is a `text` column
+ * an owner also reads on a card.
+ */
+function noteFrom(summary: string | null): string | null {
+  return summary?.trim().slice(0, 300) || null;
+}
+
+/**
  * One foreign event, as a block.
  *
- * The event's own title becomes the note, so the owner opening the app reads
- * "Ayşe teyze" and recognises the week rather than wondering who took it.
+ * Answers with what happened rather than throwing. `"overlap"` is a decision —
+ * the dates hold a confirmed stay and the guest keeps them. `"error"` is a week
+ * that was lost, which the caller counts rather than passing over in silence.
  */
 async function importBlock(
   houseId: string,
   eventId: string,
   event: { start: DateStr; end: DateStr; summary: string | null },
 ): Promise<"ok" | "overlap" | "error"> {
-  const note = event.summary?.trim().slice(0, 300) || null;
+  const note = noteFrom(event.summary);
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -1043,6 +1192,9 @@ async function importBlock(
         decidedAt: new Date(),
         googleEventId: eventId,
         googleSync: "synced",
+        // The marker the removal loop requires. Without it this block is
+        // indistinguishable from one the owner made in the app.
+        importedFromGoogle: true,
       });
       return "ok";
     } catch (error) {
@@ -1109,14 +1261,15 @@ export async function retryFailedSyncs(limit = 20, deps: SyncDeps = {}): Promise
         else result.cleared++;
 
         if (outcome.stop) {
-          // The token is dead. Stop asking.
+          // This owner's token is dead. Stop asking on their behalf — and only
+          // on their behalf. The next house is a different owner with a
+          // different grant, and one revoked consent must not be able to hold
+          // up everybody else's recovery.
           result.stopped = true;
           break;
         }
         if (outcome.reason === "calendar-gone") break;
       }
-
-      if (result.stopped) break;
     }
 
     return result;
