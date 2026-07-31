@@ -34,11 +34,17 @@ import { cache } from "react";
 import type { Metadata } from "next";
 import Image from "next/image";
 import { notFound } from "next/navigation";
+import { ArrowUpRightIcon } from "lucide-react";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { PhotoStrip } from "@/components/photo-strip";
 import { db } from "@/db";
-import { bookings, images, type House } from "@/db/schema";
+import {
+  bookings,
+  images,
+  type House,
+  type PlaceCategory,
+} from "@/db/schema";
 import {
   bookableWindow,
   disabledDates,
@@ -52,6 +58,11 @@ import {
   pendingRanges,
 } from "@/lib/bookings";
 import { compareDates, eachDayInRange, toStr, type DateStr } from "@/lib/dates";
+import {
+  publicGuide,
+  type GuideSectionView,
+  type PlaceView,
+} from "@/lib/guide";
 import { DEFAULT_LANG, t, tn, toLang, type Lang } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -360,6 +371,203 @@ function Hero({
 }
 
 /* ============================================================
+   THE GUIDE — THE PUBLIC HALF, AND ONLY THAT
+   ============================================================ */
+
+/**
+ * What the owner wrote about the town.
+ *
+ * These rows come from {@link publicGuide}, which cannot return a guests-only
+ * section: the visibility is bound inside that function, there is no argument
+ * for it, and the private rows are therefore never selected into this process.
+ * The split is a query. Nothing on this page hides anything, and nothing on
+ * this page should ever start.
+ *
+ * Set exactly as the arrival packet on `/b/[token]` is set — same title size,
+ * same paragraph, same stacked photographs — because it is the same guide read
+ * at two different moments, and a guest who sees both should not feel they have
+ * arrived at two different documents.
+ */
+function GuideSections({
+  sections,
+  town,
+  lang,
+}: {
+  sections: readonly GuideSectionView[];
+  town: string;
+  lang: Lang;
+}) {
+  return (
+    <section aria-labelledby="guide-heading" className="flex flex-col gap-6">
+      {/* The town's own name, not "Good to know". This is a page about
+          somewhere, and the heading is the somewhere.
+
+          "{town} ve çevresi" in Turkish rather than a suffixed "Çeşme'de":
+          Turkish vowel harmony makes the suffix depend on the town, and a
+          template cannot know whether it is -de or -da. A phrasing that takes
+          the name bare is correct for every town there is. */}
+      <h2 id="guide-heading" className="text-lg">
+        {t("guide.heading", lang, { town })}
+      </h2>
+
+      {sections.map((section) => (
+        <div key={section.id} className="flex flex-col gap-2">
+          <h3 className="text-base font-medium">{section.title}</h3>
+          {/* An empty body is a correct section, not a broken one — the owner
+              may have written a title and nothing under it. */}
+          {section.body.trim() ? (
+            <p className="text-base whitespace-pre-line">
+              {section.body.trim()}
+            </p>
+          ) : null}
+          {section.photos.map((photo) => (
+            <div
+              key={photo.id}
+              className="relative aspect-[4/3] overflow-hidden rounded-lg bg-muted"
+            >
+              <Image
+                src={photo.url}
+                alt={photo.alt?.trim() || section.title}
+                fill
+                // The column is 560px wide at most, less the 16px gutters.
+                sizes="(max-width: 592px) 100vw, 528px"
+                className="object-cover"
+              />
+            </div>
+          ))}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/**
+ * The order the six categories are read in, here and in the owner's editor.
+ *
+ * It runs the way a day does — a meal, a drink, the sea, a walk, an errand,
+ * the children — rather than alphabetically, which would open the list on the
+ * beach for no reason at all.
+ */
+const PLACE_ORDER = [
+  "eat",
+  "drink",
+  "beach",
+  "walk",
+  "shop",
+  "kids",
+] as const satisfies readonly PlaceCategory[];
+
+/**
+ * One place: a name, a sentence, and a way there if the owner pasted one.
+ *
+ * The row carries **no category label**. "Ali'nin Yeri · eat" is a database
+ * view of a restaurant; the category is the heading it is filed under, said
+ * once over the group instead of six times down the column.
+ *
+ * A place with a `mapUrl` is a link and looks like one; a place without is
+ * text. There is no Maps or Places API anywhere in this product — that was an
+ * explicit cost decision — so the link is a plain URL the owner pasted, opened
+ * in a tab of its own so that a guest who was halfway through choosing their
+ * nights still has the calendar behind them.
+ */
+function PlaceRow({ place, lang }: { place: PlaceView; lang: Lang }) {
+  const photo = place.photos[0];
+  const note = place.note?.trim();
+
+  const inside = (
+    <>
+      {photo ? (
+        <span className="relative size-16 shrink-0 overflow-hidden rounded-lg bg-muted">
+          <Image
+            src={photo.url}
+            alt=""
+            fill
+            sizes="64px"
+            className="object-cover"
+          />
+        </span>
+      ) : null}
+      <span className="min-w-0 flex-1">
+        <span className="font-heading block text-base break-words">
+          {place.name}
+          {place.mapUrl ? (
+            <>
+              <ArrowUpRightIcon
+                aria-hidden="true"
+                className="ml-1 inline size-4 shrink-0 align-[-0.1em] text-muted-foreground"
+              />
+              <span className="sr-only"> — {t("house.place.map", lang)}</span>
+            </>
+          ) : null}
+        </span>
+        {note ? (
+          <span className="mt-0.5 block text-sm text-muted-foreground">
+            {note}
+          </span>
+        ) : null}
+      </span>
+    </>
+  );
+
+  if (!place.mapUrl) {
+    return (
+      <li className="flex min-h-14 items-center gap-3 py-1">{inside}</li>
+    );
+  }
+
+  return (
+    <li>
+      <a
+        href={place.mapUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="flex min-h-14 items-center gap-3 rounded-lg py-1 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        {inside}
+      </a>
+    </li>
+  );
+}
+
+/** Every place the owner listed, gathered under the six headings. */
+function Places({
+  places,
+  lang,
+}: {
+  places: readonly PlaceView[];
+  lang: Lang;
+}) {
+  return (
+    <section aria-labelledby="places-heading" className="flex flex-col gap-6">
+      <h2 id="places-heading" className="text-lg">
+        {t("guide.places", lang)}
+      </h2>
+
+      {PLACE_ORDER.map((category) => {
+        const group = places.filter((place) => place.category === category);
+        if (group.length === 0) return null;
+
+        return (
+          <div key={category} className="flex flex-col gap-2">
+            {/* The grotesque, small and muted: this is the only word on the
+                page that is a filing decision rather than something somebody
+                said, and it should read as the shelf, not as the contents. */}
+            <h3 className="font-sans text-xs font-medium text-muted-foreground">
+              {t(`guide.places.${category}`, lang)}
+            </h3>
+            <ul className="flex flex-col divide-y divide-border">
+              {group.map((place) => (
+                <PlaceRow key={place.id} place={place} lang={lang} />
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+/* ============================================================
    PAGE
    ============================================================ */
 
@@ -378,11 +586,14 @@ export default async function HousePage(props: PageProps<"/h/[slug]">) {
   // all work from this one string, so a phone with a wrong clock changes nothing.
   const today = toStr(new Date());
 
-  const [photos, busy, pending, named] = await Promise.all([
+  const [photos, busy, pending, named, guide] = await Promise.all([
     galleryPhotos(house.id),
     busyRanges(house.id),
     pendingRanges(house.id),
     guestNamesByRange(house),
+    // Only ever the public half. There is no argument to this that could ask
+    // for the other one — see the head of lib/guide.ts.
+    publicGuide(house.id),
   ]);
 
   const taken = disabledDates(rules, busy, today);
@@ -521,6 +732,26 @@ export default async function HousePage(props: PageProps<"/h/[slug]">) {
           <p className="font-heading text-lg text-pretty">{whoElse}</p>
         ) : null}
       </section>
+
+      {/* The town ------------------------------------------------------------ */}
+      {/* After the calendar, not before it. The first question anyone opening
+          this link has is whether August is free, and a guide is a good deal
+          of scrolling to put between them and the grid that answers it. Read
+          in order the page is an invitation: this is the house, this is when
+          you could come, and this is what it is like when you get here. The
+          ask is pinned to the bottom of the glass throughout, so nothing below
+          the calendar is ever out of reach. */}
+      {guide.sections.length > 0 ? (
+        <GuideSections
+          sections={guide.sections}
+          town={house.town}
+          lang={lang}
+        />
+      ) : null}
+
+      {guide.places.length > 0 ? (
+        <Places places={guide.places} lang={lang} />
+      ) : null}
     </article>
   );
 }

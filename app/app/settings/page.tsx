@@ -1,13 +1,46 @@
 import type { Metadata } from "next";
-import { isGoogleConfigured } from "@/lib/google/config";
+import Link from "next/link";
+import { ArrowRightIcon } from "lucide-react";
+
+import { ownerGuide } from "@/lib/guide";
 import { requireHouse } from "@/lib/session";
-import { GoogleSection } from "./google-section";
 import { SettingsForm } from "./settings-form";
 import { SignOut } from "./sign-out";
 
 export const metadata: Metadata = {
   title: "Settings",
 };
+
+/** One line about the guide, said in what is in it rather than in a count. */
+function guideLine(
+  publicCount: number,
+  guestsCount: number,
+  placeCount: number,
+): string {
+  if (publicCount + guestsCount + placeCount === 0) {
+    return "Nothing written yet. The town, the walk to the water, and the key code for the people you say yes to.";
+  }
+
+  const parts: string[] = [];
+  if (publicCount > 0) {
+    parts.push(
+      `${publicCount} ${publicCount === 1 ? "section" : "sections"} anyone can read`,
+    );
+  }
+  if (guestsCount > 0) {
+    parts.push(`${guestsCount} only your guests see`);
+  }
+  if (placeCount > 0) {
+    parts.push(`${placeCount} ${placeCount === 1 ? "place" : "places"}`);
+  }
+
+  const written =
+    parts.length === 1
+      ? parts[0]
+      : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+
+  return `${written.charAt(0).toUpperCase()}${written.slice(1)}.`;
+}
 
 /**
  * The owner's own screen: what the house is called, what a request has to meet,
@@ -30,9 +63,17 @@ export const metadata: Metadata = {
  * hamburger, and when that went it needed a home. This is the screen that is
  * about *your* end of the product rather than the guest's, so it ends here, at
  * the foot of everything, where a phone app puts it.
+ *
+ * ### The guide is a row, not a section
+ *
+ * `/app/settings/guide` is a child of this route so that the "The house" tab
+ * stays lit while the owner is writing in it — see the head of that page for
+ * why it is a room in here rather than a fifth tab. This screen only holds the
+ * door to it, at the top, where two taps from the tab bar is the whole argument.
  */
 export default async function SettingsPage() {
   const house = await requireHouse();
+  const guide = await ownerGuide(house.id);
 
   return (
     <section className="flex flex-1 flex-col gap-6 pt-8 pb-6">
@@ -52,6 +93,32 @@ export default async function SettingsPage() {
         </p>
       </header>
 
+      {/* The guide ----------------------------------------------------------
+          First thing under the header, and above the form, because it is the
+          only thing on this screen that is *writing* rather than settling a
+          number — and because two taps from the tab bar is the whole argument
+          for it not being a fifth tab. It is a row, not a section: the words
+          themselves live on their own screen, and repeating any of them here
+          would be a second place to look for them. */}
+      <Link
+        href="/app/settings/guide"
+        className="flex min-h-14 items-center gap-3 rounded-xl border border-foreground/25 px-4 py-3"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="font-heading block text-lg">
+            What you would tell them
+          </span>
+          <span className="mt-0.5 block text-sm text-muted-foreground">
+            {guideLine(
+              guide.publicSections.length,
+              guide.guestsSections.length,
+              guide.places.length,
+            )}
+          </span>
+        </span>
+        <ArrowRightIcon className="size-5 shrink-0" aria-hidden="true" />
+      </Link>
+
       <SettingsForm
         house={{
           id: house.id,
@@ -70,25 +137,6 @@ export default async function SettingsPage() {
         }}
       />
 
-      {/* Last, and on purpose.
-
-          Connecting a calendar is a once-ever setup step. The name, the words
-          and the photos are what an owner opens this screen to change, and they
-          open it more than once — so second position was going to the most
-          inert block on the page. On an install with no OAuth client this is a
-          heading and one sentence with nothing to press; it belongs at the foot
-          of the screen, where a footnote belongs.
-
-          Like photos, it saves on its own rather than through the form's sticky
-          bar — connecting a calendar is a round trip to Google, not a field. The
-          bar is `sticky bottom-0` *inside* the form, so it pins to the form's own
-          box and releases at its end rather than floating over this.
-          `configured` is read on the server: a client component must not be the
-          thing that decides whether credentials exist. */}
-      <GoogleSection
-        configured={isGoogleConfigured()}
-        houseName={house.name}
-      />
 
       {/* The last thing on the last screen, ruled off from the house so it
           cannot be mistaken for one more thing about the house. */}

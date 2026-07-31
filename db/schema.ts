@@ -94,7 +94,7 @@ export const houses = pgTable(
     /** nanoid behind the private subscribe URL /api/feed/[feedToken].ics */
     feedToken: text("feed_token").notNull().unique(),
 
-    /** id of the secondary Google calendar this app created. NULL = not connected. */
+    /** DEAD — see the note on bookings.googleEventId. */
     googleCalendarId: text("google_calendar_id"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -133,6 +133,12 @@ export const bookings = pgTable(
     /** nanoid — the guest's private link at /b/[token]. */
     token: text("token").notNull().unique(),
 
+    // DEAD: the Google Calendar sync these three served was removed in favour
+    // of the /api/feed/[feedToken].ics subscribe feed, which needs no OAuth
+    // client and no tokens. The columns are left in place rather than dropped —
+    // a destructive migration to reclaim three always-default columns is not
+    // worth the risk, and `drizzle-kit push` would happily run it. Delete them
+    // together, deliberately, if the table ever needs the room.
     googleEventId: text("google_event_id"),
     googleSync: googleSyncStatus("google_sync").notNull().default("none"),
 

@@ -23,10 +23,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { googleCredentials, isGoogleConfigured } from "@/lib/google/config";
-import {
-  googleCredentials as clientCredentials,
-  isGoogleConfigured as clientIsConfigured,
-} from "@/lib/google/client";
 
 const SAVED_ID = process.env.GOOGLE_CLIENT_ID;
 const SAVED_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -98,27 +94,5 @@ describe("isGoogleConfigured", () => {
     expect(isGoogleConfigured()).toBe(false);
     process.env.GOOGLE_CLIENT_SECRET = "secret";
     expect(isGoogleConfigured()).toBe(true);
-  });
-});
-
-describe("agreement with lib/google/client.ts", () => {
-  const cases: [string | undefined, string | undefined][] = [
-    [undefined, undefined],
-    ["id", undefined],
-    [undefined, "secret"],
-    ["", ""],
-    ["  ", "  "],
-    ["  id  ", "  secret  "],
-    ["id", "secret"],
-  ];
-
-  it.each(cases)("agrees for id=%o secret=%o", (id, secret) => {
-    if (id === undefined) delete process.env.GOOGLE_CLIENT_ID;
-    else process.env.GOOGLE_CLIENT_ID = id;
-    if (secret === undefined) delete process.env.GOOGLE_CLIENT_SECRET;
-    else process.env.GOOGLE_CLIENT_SECRET = secret;
-
-    expect(googleCredentials()).toEqual(clientCredentials());
-    expect(isGoogleConfigured()).toBe(clientIsConfigured());
   });
 });

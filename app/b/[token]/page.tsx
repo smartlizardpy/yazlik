@@ -75,14 +75,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRightIcon } from "lucide-react";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { Button } from "@/components/ui/button";
 import { db } from "@/db";
 import { user } from "@/db/auth-schema";
-import { guideSections, images, type BookingStatus } from "@/db/schema";
+import { images, type BookingStatus } from "@/db/schema";
 import { bookingByToken } from "@/lib/bookings";
 import { compareDates, nightsBetween, toStr } from "@/lib/dates";
+import { guestsOnlySections } from "@/lib/guide";
 import {
   DEFAULT_LANG,
   humanRange,
@@ -150,13 +151,6 @@ export async function generateMetadata(
    WHAT THE PAGE LOADS
    ============================================================ */
 
-type PacketSection = {
-  id: string;
-  title: string;
-  body: string;
-  photos: { id: string; url: string; alt: string | null }[];
-};
-
 type Photo = { url: string; alt: string | null };
 
 /**
@@ -201,64 +195,6 @@ async function ownerFirstName(ownerId: string): Promise<string | null> {
 
   const first = row?.name.trim().split(/\s+/)[0];
   return first || null;
-}
-
-/**
- * The guests-only half of the guide, with its photos.
- *
- * **Only ever called on a confirmed booking.** The `visibility` filter is the
- * privacy split and the caller's status check is the lock on it; neither is
- * optional. Photos come from a second query keyed on the section ids, so a
- * photo can only be selected if its section already was — the image rows never
- * get a chance to disagree with the sections about what a guest may see.
- *
- * Phase 7 builds the editor that writes these. Until then this returns an empty
- * array on every house, which is exactly the case the page has to say something
- * honest about — see `booking.packet.coming`.
- */
-async function arrivalPacket(houseId: string): Promise<PacketSection[]> {
-  const sections = await db
-    .select({
-      id: guideSections.id,
-      title: guideSections.title,
-      body: guideSections.body,
-    })
-    .from(guideSections)
-    .where(
-      and(
-        eq(guideSections.houseId, houseId),
-        eq(guideSections.visibility, "guests"),
-      ),
-    )
-    .orderBy(asc(guideSections.position), asc(guideSections.title));
-
-  if (sections.length === 0) return [];
-
-  const photos = await db
-    .select({
-      id: images.id,
-      url: images.url,
-      alt: images.alt,
-      sectionId: images.sectionId,
-    })
-    .from(images)
-    .where(
-      and(
-        eq(images.houseId, houseId),
-        inArray(
-          images.sectionId,
-          sections.map((section) => section.id),
-        ),
-      ),
-    )
-    .orderBy(asc(images.position), asc(images.createdAt));
-
-  return sections.map((section) => ({
-    ...section,
-    photos: photos
-      .filter((photo) => photo.sectionId === section.id)
-      .map(({ id, url, alt }) => ({ id, url, alt })),
-  }));
 }
 
 /* ============================================================
@@ -423,11 +359,20 @@ export default async function BookingPage(props: PageProps<"/b/[token]">) {
   const lang: Lang = toLang(house.language);
   const status = booking.status;
 
-  // THE PRIVACY SPLIT. Any status other than confirmed and the guides-only
-  // sections are never selected — see arrivalPacket above. The cover photo and
-  // the owner's first name are public either way, so they load for everyone.
+  // THE PRIVACY SPLIT. Any status other than confirmed and the guests-only
+  // sections are never selected — `guestsOnlySections` is not reached, so no
+  // query for them is ever put to the database and there is no row in this
+  // process to leak. The cover photo and the owner's first name are public
+  // either way, so they load for everyone.
+  //
+  // That function used to be a private `arrivalPacket()` in this file. It is
+  // `lib/guide.ts` now, which is also where `/h/[slug]` gets the *public* half
+  // and where the rule lives that neither caller can ask for the other's rows.
+  // One query, one place, and the two pages cannot drift apart.
   const [packet, cover, owner] = await Promise.all([
-    status === "confirmed" ? arrivalPacket(house.id) : Promise.resolve([]),
+    status === "confirmed"
+      ? guestsOnlySections(house.id)
+      : Promise.resolve([]),
     coverPhoto(house.id),
     ownerFirstName(house.ownerId),
   ]);
