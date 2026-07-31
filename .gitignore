@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template, which holds only variable names and the comments
+# explaining them. It is the one place that documents what a deployment needs,
+# and it is useless to a person who cannot see it.
+!.env.example
 
 # vercel
 .vercel
