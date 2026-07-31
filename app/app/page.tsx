@@ -12,13 +12,17 @@
  * 2. **The summer, laid out.** A scrolling strip of the open months with the
  *    weeks filled in — the model every house owner already holds in their head
  *    and the one thing two stacked lists cannot show: *shape*. One shelf per
- *    month, ink across the weeks that are spoken for, and lanes underneath —
- *    on the same shelf, not floating below it — carrying a dashed outline for
- *    each week somebody has asked about. Two people asking for one week is two
- *    outlines on two lines; see {@link dealIntoLanes}.
+ *    month, ruled with shaded weekends and numbered Mondays so there is
+ *    something to measure against, ink across the weeks that are spoken for,
+ *    and lanes underneath — on the same shelf, not floating below it —
+ *    carrying a dashed outline for each week somebody has asked about. Two
+ *    people asking for one week is two outlines on two lines; see
+ *    {@link dealIntoLanes}.
  * 3. **The asks**, each one a card with a face on it.
  * 4. **Who is coming**, in exactly the same card.
- * 5. **The link**, which is the whole reason the product exists.
+ * 5. **The nights the host is keeping**, which is a different sentence and so
+ *    a different section — a roof repair is not somebody coming.
+ * 6. **The link**, which is the whole reason the product exists.
  *
  * ### One card, twice
  *
@@ -53,12 +57,13 @@
  * and the sentence it produces lands on the card.
  */
 
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
-import { and, asc, eq, gte } from "drizzle-orm";
+import { and, asc, eq, gte, isNull } from "drizzle-orm";
 
 import { db } from "@/db";
-import { bookings, type Booking } from "@/db/schema";
+import { bookings, images, type Booking } from "@/db/schema";
 import { disabledDates } from "@/lib/availability";
 import { busyRanges, houseRules } from "@/lib/bookings";
 import { nightsBetween, rangesOverlap, toStr, type DateStr } from "@/lib/dates";
@@ -158,12 +163,31 @@ function initial(b: Booking): string | null {
    for the block behind it — a stray word floating on bare paper. This is a
    picture of the shape of the summer, and every one of these people is named
    in full on a card a thumb's length below.
+
+   ### It has to be a month, not a bar
+
+   To scale is worth nothing without something to measure against. A shelf with
+   one pill on it and no marks is a progress bar: you can see that something is
+   there and nothing at all about *when*. So the month is ruled, twice over:
+
+   - **weekends are shaded**, which is what turns a flat band into weeks. Four
+     or five pairs of darker columns is a rhythm the eye counts without being
+     asked, and it is the shape a summer actually has — the weekends are the
+     part everybody wants;
+   - **every Monday is numbered** underneath, on a hairline tick. "The week of
+     the 17th" is how this is spoken out loud, so that is what is written down.
+
+   Neither is a date field. The exact nights are on the cards below, in full,
+   in words. This is the picture.
    ============================================================ */
 
 const DAY_PX = 10;
 
 /** Below this a name inside a block would be two letters and an ellipsis. */
 const NAME_FITS_PX = 56;
+
+/** A Monday this close to the month's end has nowhere to put its number. */
+const TICK_FITS_PX = 24;
 
 /** One lane of the shelf: the ink row of stays, and each row of asks. */
 const STAY_LANE_PX = 36;
@@ -190,6 +214,8 @@ type StripMonth = {
   /** `YYYY-MM-01` of this month, and of the one after it. */
   first: DateStr;
   next: DateStr;
+  /** Weekday of the 1st, `0` = Sunday. Every other day counts on from here. */
+  firstWeekday: number;
 };
 
 type StripSpan = {
@@ -257,12 +283,50 @@ function monthsFrom(first: DateStr, last: DateStr): StripMonth[] {
       days: daysInMonth(year, month),
       first: firstOfMonth(year, month),
       next: firstOfMonth(nextYear, nextMonth),
+      firstWeekday: new Date(year, month, 1).getDay(),
     });
     if (key >= lastKey) break;
     year = nextYear;
     month = nextMonth;
   }
 
+  return out;
+}
+
+/** A run of days, measured in day indices from the 1st. */
+type Band = { key: string; from: number; days: number };
+
+/**
+ * The weekends of a month, as bands of day indices.
+ *
+ * Gathered into runs rather than drawn a day at a time so that a Saturday and
+ * its Sunday are one 20px column, and so that a month opening on a Sunday —
+ * whose Saturday belongs to the month before — still gets its shading rather
+ * than a missing stripe at the very place the eye starts counting.
+ */
+function weekendBands(month: StripMonth): Band[] {
+  const bands: Band[] = [];
+  let run = 0;
+
+  for (let day = 0; day <= month.days; day++) {
+    const weekday = (month.firstWeekday + day) % 7;
+    if (day < month.days && (weekday === 6 || weekday === 0)) {
+      run += 1;
+      continue;
+    }
+    if (run > 0) bands.push({ key: `w${day - run}`, from: day - run, days: run });
+    run = 0;
+  }
+
+  return bands;
+}
+
+/** Every Monday of a month: where it falls, and the number it wears. */
+function weekStarts(month: StripMonth): { index: number; day: number }[] {
+  const out: { index: number; day: number }[] = [];
+  for (let day = 0; day < month.days; day++) {
+    if ((month.firstWeekday + day) % 7 === 1) out.push({ index: day, day: day + 1 });
+  }
   return out;
 }
 
@@ -355,17 +419,17 @@ function placeInMonth(spans: readonly StripSpan[], month: StripMonth): Piece[] {
 
 const CARD = "rounded-xl bg-card p-4 ring-1 ring-foreground/10";
 
+/**
+ * The circle only ever stands for a person, so it is always filled.
+ *
+ * It used to go empty and dashed when there was no letter, which is what an
+ * owner block got — and an empty dashed circle where a face goes does not read
+ * as "nobody is in the house", it reads as a photograph that failed to load.
+ * Blocks have their own section now and no circle at all; what is left here is
+ * the rare guest who asked without leaving a name, and they get the same warm
+ * disc as everybody else, quietly unlettered.
+ */
 function Face({ letter }: { letter: string | null }) {
-  if (!letter) {
-    // Nobody is in an owner block, so the circle is empty and dashed — the same
-    // shape the calendar uses for nights that are spoken for but not slept in.
-    return (
-      <span
-        aria-hidden="true"
-        className="size-12 shrink-0 rounded-full border border-dashed border-foreground/30"
-      />
-    );
-  }
   return (
     <span
       aria-hidden="true"
@@ -439,7 +503,7 @@ export default async function DashboardPage() {
   const house = await requireHouse();
   const today = toStr(new Date());
 
-  const [pending, upcoming, busy] = await Promise.all([
+  const [pending, upcoming, busy, cover] = await Promise.all([
     db
       .select()
       .from(bookings)
@@ -459,6 +523,20 @@ export default async function DashboardPage() {
     // Every confirmed range, past ones included — a pending request can sit
     // anywhere, and `upcoming` has already dropped what is behind us.
     busyRanges(house.id),
+    // The first gallery photo — both foreign keys null means it hangs on the
+    // house itself, exactly as the guest page reads it.
+    db
+      .select({ url: images.url })
+      .from(images)
+      .where(
+        and(
+          eq(images.houseId, house.id),
+          isNull(images.placeId),
+          isNull(images.sectionId),
+        ),
+      )
+      .orderBy(asc(images.position), asc(images.createdAt))
+      .limit(1),
   ]);
 
   const cards: PendingCard[] = pending.map((booking) => ({
@@ -490,9 +568,19 @@ export default async function DashboardPage() {
     today,
   );
 
+  /* --- Two different things, told apart --------------------------------
+     A cousin arriving and a roof being repaired were in one list under "Who is
+     coming", which put "Roof repair" where a person's name goes and answered a
+     question nobody asked. They stay together on the shelf above — the shape of
+     the summer is the shape of the summer, whoever is holding the nights — and
+     part company here, where the words are. */
+
+  const coming = upcoming.filter((b) => b.kind === "guest");
+  const held = upcoming.filter((b) => b.kind === "block");
+
   /* --- The headline is the news --------------------------------------- */
 
-  const arriving = upcoming.find((b) => b.kind === "guest");
+  const arriving = coming[0];
   const headline = (() => {
     if (pending.length === 1) {
       const only = pending[0];
@@ -570,18 +658,51 @@ export default async function DashboardPage() {
     <div className="flex flex-1 flex-col gap-10 pt-5 pb-4">
       {/* Headline + the summer ---------------------------------------------- */}
       <section className="flex flex-col gap-5">
-        {/* The news, and the largest thing on the screen — a step above the
-            names on the cards, which are the second-largest. */}
-        <h1 className="text-3xl text-balance">{headline}</h1>
+        <div className="flex flex-col gap-2.5">
+          {/* The house, before the news about it.
+              /app used to be the only screen in the product with no picture of
+              the house on it and its name nowhere but 13px of truncated header
+              — the owner's own screen had less of the house in it than the one
+              they send to their cousins. This is small on purpose: a thumbnail
+              and a quiet line, the size of a name in a contacts list, so it
+              says which house without competing with who is asking about it. */}
+          <div className="flex items-center gap-2.5">
+            {cover[0] ? (
+              <Image
+                src={cover[0].url}
+                alt=""
+                width={72}
+                height={72}
+                className="size-9 shrink-0 rounded-md object-cover"
+              />
+            ) : null}
+            <p className="min-w-0 truncate text-sm text-muted-foreground">
+              {house.name}
+            </p>
+          </div>
+
+          {/* The news, and the largest thing on the screen — a step above the
+              names on the cards, which are the second-largest. */}
+          <h1 className="text-3xl text-balance">{headline}</h1>
+        </div>
 
         {/* Everything drawn here is also written out in the lists below, so the
             strip is a picture and nothing else. Announcing it twice would make
             it worse to listen to, not better.
 
             It runs off the right-hand edge on any phone, so it says so: the
-            last month fades into the paper instead of being sliced through the
-            middle of "September", and a flick settles on a month. A word cut in
-            half reads as a broken layout; a fade reads as more. */}
+            last month fades into the paper rather than stopping dead.
+
+            The fade used to land on the word. A month label sat at the left of
+            its own column, the next column began eight pixels short of the
+            48px fade, and the screen said "Septem". The fix is not a wider fade
+            — no fade can be wide enough to swallow a whole month, they are not
+            all the same width — it is to move the label to the middle of the
+            month it names. A centred label is 120px deep into its own column,
+            so at every position the strip comes to rest at it is either fully
+            on the screen or nowhere near it, and the only thing the fade ever
+            touches is the shelf: a cut rectangle reads as more, a cut word
+            reads as a bug. */}
         <div
           aria-hidden="true"
           className="-mx-4 snap-x snap-proximity scroll-px-4 overflow-x-auto px-4 [-ms-overflow-style:none] [mask-image:linear-gradient(to_right,#000_calc(100%_-_3rem),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -597,7 +718,7 @@ export default async function DashboardPage() {
                   className="shrink-0 snap-start"
                   style={{ width: month.days * DAY_PX }}
                 >
-                  <p className="font-heading mb-1.5 text-base leading-none">
+                  <p className="font-heading mb-1.5 text-center text-base leading-none">
                     {month.label}
                   </p>
 
@@ -612,6 +733,21 @@ export default async function DashboardPage() {
                       lower: spoken for on top, asked about underneath, and the
                       today line crossing both. */}
                   <div className="relative overflow-hidden rounded-md bg-secondary">
+                    {/* The weeks, drawn as the weekends between them. Under
+                        everything else: a stay laid over its weekend hides the
+                        shading, which is right — the shading is there to be
+                        counted in the nights nobody has taken yet. */}
+                    {weekendBands(month).map((band) => (
+                      <span
+                        key={band.key}
+                        className="absolute inset-y-0 bg-foreground/10"
+                        style={{
+                          left: `${(band.from / month.days) * 100}%`,
+                          width: `${(band.days / month.days) * 100}%`,
+                        }}
+                      />
+                    ))}
+
                     {now ? (
                       <span
                         className="absolute inset-y-0 z-10 w-px bg-foreground/35"
@@ -651,10 +787,17 @@ export default async function DashboardPage() {
                         with no unanswered requests keeps a single-height shelf
                         rather than a strip of empty gutter. One row per clashing
                         ask: two people on one week are two outlines, stacked,
-                        never one pill drawn twice. */}
+                        never one pill drawn twice.
+
+                        No tint on the lane. It used to carry `bg-foreground/5`
+                        across the full width of the month, so one five-night
+                        ask painted a 310px grey band to hold a 60px pill and
+                        the shelf read as two unfinished bars. The dashed
+                        outlines sit straight on the shelf; the asks are the
+                        pieces, not the stripe behind them. */}
                     {askLanes > 0 ? (
                       <div
-                        className="relative bg-foreground/5"
+                        className="relative"
                         style={{ height: askLanes * ASK_LANE_PX }}
                       >
                         {asks.map((piece) => (
@@ -675,6 +818,27 @@ export default async function DashboardPage() {
                         ))}
                       </div>
                     ) : null}
+                  </div>
+
+                  {/* The Mondays, numbered. This is the line that turns the
+                      shelf from a bar into a month: "the week of the 17th" is
+                      the sentence a host says out loud, so the 17th is what is
+                      written under the place it starts. A Monday with no room
+                      left for its number stays silent rather than spilling into
+                      the next month. */}
+                  <div className="relative mt-1 h-3">
+                    {weekStarts(month).map(({ index, day }) =>
+                      (month.days - index) * DAY_PX >= TICK_FITS_PX ? (
+                        <span
+                          key={index}
+                          className="num absolute top-0 flex items-center gap-1 text-xs leading-none text-muted-foreground"
+                          style={{ left: `${(index / month.days) * 100}%` }}
+                        >
+                          <span className="block h-2 w-px shrink-0 bg-foreground/20" />
+                          {day}
+                        </span>
+                      ) : null,
+                    )}
                   </div>
                 </div>
               );
@@ -743,13 +907,15 @@ export default async function DashboardPage() {
       <section className="flex flex-col gap-4">
         <h2 className="text-lg">Who is coming</h2>
 
-        {upcoming.length === 0 ? (
+        {coming.length === 0 ? (
           <p className="text-base text-muted-foreground">
-            Nobody yet. Every week is open.
+            {/* "Every week is open" is a promise, and it stops being true the
+                moment the host has kept a week for themselves. */}
+            {held.length > 0 ? "Nobody yet." : "Nobody yet. Every week is open."}
           </p>
         ) : (
           <ul className="flex flex-col gap-3">
-            {upcoming.map((b) => {
+            {coming.map((b) => {
               const nights = nightsBetween(b.startDate, b.endDate);
               return (
                 <li key={b.id}>
@@ -757,33 +923,17 @@ export default async function DashboardPage() {
                     <Who booking={b} />
 
                     <p className="mt-3 text-sm text-muted-foreground">
-                      {sentence(nightsPhrase(nights))}
-                      {b.kind === "guest" ? (
-                        <>
-                          , {spell(b.guests)}{" "}
-                          {plural(b.guests, "person", "people")}
-                        </>
-                      ) : null}
+                      {sentence(nightsPhrase(nights))}, {spell(b.guests)}{" "}
+                      {plural(b.guests, "person", "people")}
                     </p>
 
-                    {/* A block's note is already its name up there. A guest's is
-                        the sentence they wrote when they asked, and it stays on
+                    {/* The sentence they wrote when they asked, and it stays on
                         the card after the yes — it is the reason you remember
                         the week. */}
-                    {b.kind === "guest" && b.note ? (
+                    {b.note ? (
                       <p className="mt-3 border-l border-border pl-3 text-base break-words">
                         {b.note}
                       </p>
-                    ) : null}
-
-                    {/* Only the host's own nights come back this way. A guest's
-                        confirmed stay has no undo here — see decision.ts. The
-                        rule above it is there so the control cannot be mistaken
-                        for one more line of prose. */}
-                    {b.kind === "block" ? (
-                      <div className="mt-3 -mb-2 border-t border-border pt-1">
-                        <UnblockButton bookingId={b.id} />
-                      </div>
                     ) : null}
                   </article>
                 </li>
@@ -791,6 +941,61 @@ export default async function DashboardPage() {
             })}
           </ul>
         )}
+      </section>
+
+      {/* The nights the host is keeping -------------------------------------- */}
+      {/* A roof repair is not a person coming. It used to sit in the list above
+          under a heading asking who, with an empty circle where a face goes and
+          "Four nights" underneath, which reads as a guest whose photograph
+          failed to load. Same nights, different sentence, so: its own heading,
+          and no circle at all — nobody is in the house those nights and the
+          card should not pretend there is a name missing.
+
+          "Block dates" stays at the foot of this section whether or not there
+          is anything in it, because blocking is how the section gets filled. */}
+      <section className="flex flex-col gap-4">
+        {held.length > 0 ? (
+          <>
+            <h2 className="text-lg">The house is yours</h2>
+
+            <ul className="flex flex-col gap-3">
+              {held.map((b) => {
+                const nights = nightsBetween(b.startDate, b.endDate);
+                return (
+                  <li key={b.id}>
+                    <article className={CARD}>
+                      {/* The note the host wrote is the name of the week — the
+                          reason they kept it. No circle beside it: this is a
+                          week, not a person. */}
+                      <h3 className="font-heading text-xl leading-none break-words">
+                        {nameOf(b)}
+                      </h3>
+                      <p className="num mt-1.5 text-base">
+                        {humanRange(b.startDate, b.endDate, LANG)}
+                      </p>
+
+                      {/* Just the count. "Nobody in the house" would be a
+                          guess — a host blocks a week to be there themselves as
+                          often as to keep everybody out — and the heading has
+                          already said what these nights are. */}
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {sentence(nightsPhrase(nights))}
+                      </p>
+
+                      {/* Only the host's own nights come back this way. A
+                          guest's confirmed stay has no undo here — see
+                          decision.ts. The rule above it is there so the control
+                          cannot be mistaken for one more line of prose. */}
+                      <div className="mt-3 -mb-2 border-t border-border pt-1">
+                        <UnblockButton bookingId={b.id} />
+                      </div>
+                    </article>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        ) : null}
 
         <BlockDates
           today={today}

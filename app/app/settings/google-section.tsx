@@ -9,10 +9,14 @@
  * 1. **Not set up on this install.** No `GOOGLE_CLIENT_ID`, no
  *    `GOOGLE_CLIENT_SECRET`, so there is no OAuth client for a Connect button to
  *    lead to. This is where every deployment starts and where this one is today.
- *    One sentence and a pointer at `SETUP-GOOGLE.md`. **No button.** A Connect
- *    button here would round-trip to a 400 and look like the app was broken,
- *    when in fact nothing is wrong and nothing is missing except twenty minutes
- *    in somebody's calendar.
+ *    Two sentences: what is true, and who can change it. **No button.** A
+ *    Connect button here would round-trip to a 400 and look like the app was
+ *    broken, when in fact nothing is wrong.
+ *
+ *    Nothing here names a file. The person holding this phone owns a house, not
+ *    a checkout of this repository — there is no project folder on their side of
+ *    the screen, and `SETUP-GOOGLE.md` is addressed to whoever deployed it. That
+ *    pointer belongs in the README, which is where it is.
  * 2. **Set up, nothing connected.** A Connect button, and then the choice of
  *    which calendar. The part that has to be said out loud is what two-way
  *    actually means, because it is the thing that surprises people after the
@@ -361,8 +365,8 @@ export function GoogleSection({ configured, houseName }: GoogleSectionProps) {
     return (
       <Frame headingId={headingId}>
         <p className="text-sm text-pretty text-muted-foreground">
-          Calendar sync is not set up on this install. SETUP-GOOGLE.md, in the
-          project folder, is the twenty minutes it takes.
+          This house does not put stays in Google Calendar. Whoever set it up for
+          you can turn that on.
         </p>
       </Frame>
     );
@@ -574,7 +578,10 @@ function Frame({
   children: React.ReactNode;
 }) {
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-4">
+    <section
+      aria-labelledby={headingId}
+      className="flex scroll-mt-20 flex-col gap-4"
+    >
       <h2 id={headingId} className="text-lg">
         Google Calendar
       </h2>

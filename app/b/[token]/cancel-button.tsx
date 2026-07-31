@@ -45,9 +45,26 @@ export type CancelButtonProps = {
   token: string;
   /** The house's language. Everything a guest reads is in it. */
   language: Lang;
+  /**
+   * The owner's first name, or null for an account that never filled one in.
+   *
+   * The question used to end "The owner will be told", which is the one voice
+   * this product does not use: giving a week back is telling *Ayşe*, and the
+   * page above this row already names her twice.
+   */
+  owner: string | null;
 };
 
-export function CancelButton({ token, language }: CancelButtonProps) {
+/**
+ * A line that names the owner, or the `.anon` wording that names nobody. Same
+ * contract as `ownerLine` on the page — kept local rather than imported so this
+ * client component pulls in nothing but the dictionary.
+ */
+function ownerLine(key: string, owner: string | null, language: Lang): string {
+  return owner ? t(key, language, { owner }) : t(`${key}.anon`, language);
+}
+
+export function CancelButton({ token, language, owner }: CancelButtonProps) {
   const router = useRouter();
   const baseId = useId();
   const keepId = `${baseId}-keep`;
@@ -77,7 +94,7 @@ export function CancelButton({ token, language }: CancelButtonProps) {
         if (result.ok) {
           setDone(true);
           // The page will say "Cancelled" on its own; this acknowledges the tap.
-          toast.success(t("booking.cancel.done", language));
+          toast.success(ownerLine("booking.cancel.done", owner, language));
         } else {
           setError(result.error);
           setConfirming(false);
@@ -119,7 +136,7 @@ export function CancelButton({ token, language }: CancelButtonProps) {
       className="flex flex-col gap-3 rounded-lg border border-border p-3"
     >
       <p id={`${baseId}-ask`} className="text-sm">
-        {t("booking.cancel.ask", language)}
+        {ownerLine("booking.cancel.ask", owner, language)}
       </p>
       <div className="flex gap-2">
         <Button

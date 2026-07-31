@@ -44,13 +44,21 @@
  *
  * It used to be 13px grey tucked *under* the black button, which made the
  * caption about the link larger than the link. On the one that matters it now
- * sits above the button, with the origin small and quiet and the house's own
- * slug in the display face — a name, set the way this product sets names. A
- * long-press still takes the whole thing: both spans live in one `<p>` and the
- * selection is of its contents, not of a span.
+ * sits above the button, in one face at one size.
  *
- * The feed's URL keeps the quiet single-line treatment. Its last segment is a
- * random token; setting that in a serif would be a joke.
+ * It briefly wore two: the origin in 15px grotesque and the slug in 24px
+ * Fraunces, on the theory that a slug is a name. It is not — it is a
+ * lowercased, hyphenated, machine-safe fragment, and setting half a URL in the
+ * display face at 1.6× the rest reads as a font failing to load rather than as
+ * emphasis. So the whole string is one size in the body face, muted, and the
+ * part that belongs to this house is picked out in ink. Colour, not a second
+ * typeface.
+ *
+ * A long-press still takes the whole thing: both halves live in one `<p>` and
+ * the selection is of its contents, not of a span.
+ *
+ * The feed's URL keeps the quiet single-line treatment, undivided. Its last
+ * segment is a random token, and pointing at it would be pointing at noise.
  *
  * ### The feedback is on the button, not in a toast
  *
@@ -264,11 +272,12 @@ export function ShareLink({
           because tier three of the clipboard fallback is a long-press on
           exactly this text. */}
       {primary ? (
-        <p ref={textRef} className="font-heading text-lg break-all select-all">
-          <span className="font-sans text-sm text-muted-foreground">
-            {origin}
-          </span>
-          {name}
+        <p
+          ref={textRef}
+          className="text-base break-all text-muted-foreground select-all"
+        >
+          {origin}
+          <span className="text-foreground">{name}</span>
         </p>
       ) : (
         <p

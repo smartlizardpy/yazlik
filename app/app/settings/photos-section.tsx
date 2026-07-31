@@ -75,7 +75,10 @@ export function PhotosSection({ houseId, houseName, photos }: PhotosSectionProps
   }
 
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-4">
+    <section
+      aria-labelledby={headingId}
+      className="flex scroll-mt-20 flex-col gap-4"
+    >
       <div className="flex flex-col gap-1">
         <h2 id={headingId} className="text-lg">
           Photos

@@ -21,11 +21,24 @@ import { Textarea } from "@/components/ui/textarea";
  *
  * Three groups, in the order someone actually thinks about them: what the house
  * is, what you will say yes to, and how much a stranger holding the link gets
- * to see. The four counts explain themselves once, above all of them, rather
- * than four times underneath: a row that reads "Shortest stay · 2 · nights" has
- * already said what it means, and four hints stacked under four spinners is a
- * control panel. The one exception is a gap of zero — the single value whose
- * meaning is not on its face — so that line appears only when it is zero.
+ * to see.
+ *
+ * ### One shape per field, and the rules are sentences
+ *
+ * Every field stacks: label, then control, then at most one line underneath.
+ * There is no second layout — a label on the left with a small control floated
+ * right is a settings list, and half a screen of one and half a screen of the
+ * other makes the eye re-learn the pattern in the middle of the form.
+ *
+ * The four counts are the reason that rule used to have exceptions. They were
+ * four label/number-box rows in a column, which is a control panel however
+ * carefully it is spaced, and this house is not administered. They are three
+ * sentences now — "Stays here are between 2 and 21 nights" — with the numbers
+ * as blanks in the line: 44px tall, tabular, tappable, and part of the words
+ * rather than floated away from them. A sentence also says what it means
+ * without a hint under it. The one exception is a gap of zero — the single
+ * value whose meaning is not on its face — so that line appears only when it
+ * is zero.
  *
  * The save bar is mounted by a change, not by the screen. At rest there is
  * nothing to save, and a permanent bar offering it both lies and covers the
@@ -115,8 +128,10 @@ function toValues(house: HouseSettings): Record<TextField, string> {
 
 /**
  * Label, control, and one line underneath: the explanation, or the problem.
- * `row` puts the label and a compact control on one line, the way a settings
- * list reads; the default stacks them, which is what a full-width text box needs.
+ *
+ * Always stacked. There used to be a `row` variant — label left, compact
+ * control right — and with it the column ran stacked, stacked, stacked, row,
+ * stacked. One shape, so the form has one rhythm.
  *
  * Defined at module level on purpose. A component declared inside the form gets
  * a new identity every render, which remounts its inputs and drops the caret
@@ -127,28 +142,18 @@ function Field({
   label,
   hint,
   error,
-  row = false,
   children,
 }: {
   id: string;
   label: string;
   hint?: string;
   error?: string | null;
-  row?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div
-        className={
-          row
-            ? "flex min-h-11 items-center justify-between gap-4"
-            : "flex flex-col gap-2"
-        }
-      >
-        <Label htmlFor={id} className={row ? "flex-1" : undefined}>
-          {label}
-        </Label>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={id}>{label}</Label>
         {children}
       </div>
       {error ? (
@@ -170,51 +175,109 @@ function describedBy(id: string, error: string | null, hint?: string) {
   return hint ? `${id}-hint` : undefined;
 }
 
-/** A whole number with its unit beside it, so the row reads as a sentence. */
-function CountField({
+/**
+ * A number written into a sentence — a blank on a ruled line, not a spinner in
+ * a column.
+ *
+ * No box and no visible label: the words on either side already say what it is,
+ * so only the underline is drawn. `aria-label` carries the same thing to a
+ * screen reader, which cannot see that the sentence continues.
+ *
+ * 44px tall and 56px wide, which is the whole reason it is `h-11` and not the
+ * height its 17px type wants: it has to be tappable with a thumb, and three
+ * digits have to fit. The line box grows to hold it, which is why the sentence
+ * around it is set at `leading-11` — every line then sits on the same rule
+ * whether or not it happens to contain a blank.
+ *
+ * Module level, like `Field`, so the input is never remounted mid-keystroke.
+ */
+function Blank({
   id,
   name,
   label,
-  unit,
-  hint,
   value,
-  error,
+  invalid,
+  describedBy: describedById,
   disabled,
   onChange,
 }: {
   id: string;
   name: CountName;
+  /** What the sentence says, for someone who cannot see the sentence. */
   label: string;
-  unit: string;
-  /** Only where the number does not speak for itself. Usually absent. */
-  hint?: string;
   value: string;
-  error: string | null;
+  invalid: boolean;
+  describedBy?: string;
   disabled: boolean;
   /** Receives the value already stripped to digits. */
   onChange: (value: string) => void;
 }) {
   return (
-    <Field id={id} label={label} hint={hint} error={error} row>
-      <div className="flex shrink-0 items-center gap-2">
-        <Input
-          id={id}
-          name={name}
-          value={value}
-          onChange={(event) => onChange(digits(event.target.value))}
-          inputMode="numeric"
-          pattern="[0-9]*"
-          autoComplete="off"
-          maxLength={3}
-          disabled={disabled}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy(id, error, hint)}
-          className="num h-11 w-16 text-center text-base"
-        />
-        <span className="w-11 text-xs text-muted-foreground">{unit}</span>
-      </div>
-    </Field>
+    <input
+      id={id}
+      name={name}
+      value={value}
+      onChange={(event) => onChange(digits(event.target.value))}
+      aria-label={label}
+      aria-invalid={invalid ? true : undefined}
+      aria-describedby={describedById}
+      inputMode="numeric"
+      pattern="[0-9]*"
+      autoComplete="off"
+      maxLength={3}
+      disabled={disabled}
+      className="num h-11 w-14 rounded-none border-0 border-b-2 border-input bg-transparent px-1 text-center align-middle text-base transition-colors outline-none focus-visible:rounded-sm focus-visible:border-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:text-destructive"
+    />
   );
+}
+
+/**
+ * One rule, and at most one line under it.
+ *
+ * `leading-11` matches `Blank`'s height so a rule that wraps to two lines keeps
+ * the same spacing as one that does not. Fraunces, because this is a statement
+ * about the house rather than a control — the blanks in it are the control.
+ */
+function Rule({
+  note,
+  children,
+}: {
+  note?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <p className="font-heading text-base leading-11 text-pretty">{children}</p>
+      {note}
+    </div>
+  );
+}
+
+/** The problem if there is one, otherwise the explanation, otherwise nothing. */
+function Note({
+  id,
+  error,
+  hint,
+}: {
+  id: string;
+  error: string | null;
+  hint?: string;
+}) {
+  if (error) {
+    return (
+      <p id={id} role="alert" className="text-xs text-destructive">
+        {error}
+      </p>
+    );
+  }
+  if (hint) {
+    return (
+      <p id={id} className="text-xs text-muted-foreground">
+        {hint}
+      </p>
+    );
+  }
+  return null;
 }
 
 export function SettingsForm({ house }: { house: HouseSettings }) {
@@ -302,6 +365,17 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
       ? "Someone can arrive the same day the last person leaves."
       : undefined;
 
+  // One line under each rule, not one under each number: the two nights in
+  // "between 2 and 21" are a single statement and only one of them can be wrong
+  // at a time — the action names one field per failure.
+  const lengthError = errorFor("minNights") ?? errorFor("maxNights");
+  const roomError = errorFor("maxGuests");
+  const gapError = errorFor("gapDays");
+
+  const lengthNoteId = `${baseId}-length-note`;
+  const roomNoteId = `${baseId}-room-note`;
+  const gapNoteId = `${baseId}-gap-note`;
+
   const privacyError = errorFor("showGuestNames");
 
   // Only ever "en" or "tr" — it starts from the row and only changes through
@@ -314,7 +388,10 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
       <input type="hidden" name="houseId" value={house.id} />
 
       {/* The house ---------------------------------------------------------- */}
-      <section aria-labelledby={houseGroupId} className="flex flex-col gap-5">
+      <section
+        aria-labelledby={houseGroupId}
+        className="flex scroll-mt-20 flex-col gap-5"
+      >
         {/* 22px Fraunces, the size a section heading is everywhere else in the
             product. At `text-sm font-medium` it was smaller than the fields it
             was introducing, which made it read as a caption about itself. */}
@@ -395,7 +472,6 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
           label="Guest language"
           hint={languageHint}
           error={errorFor("language")}
-          row
         >
           <Select
             value={values.language}
@@ -410,10 +486,11 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
                 errorFor("language"),
                 languageHint,
               )}
-              // The trigger's own height is `data-[size=default]:h-8`, and an
+              // Full width, like every other control in this column. The
+              // trigger's own height is `data-[size=default]:h-8`, and an
               // attribute selector out-specifies a plain `h-11`. Qualify it the
               // same way or the control ships at 32px.
-              className="w-36 shrink-0 text-base data-[size=default]:h-11"
+              className="w-full text-base data-[size=default]:h-11"
             >
               <SelectValue>{LANGUAGE_LABELS[languageValue]}</SelectValue>
             </SelectTrigger>
@@ -456,8 +533,14 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
         </Field>
       </section>
 
-      {/* What you'll say yes to --------------------------------------------- */}
-      <section aria-labelledby={rulesGroupId} className="flex flex-col gap-5">
+      {/* What you'll say yes to ---------------------------------------------
+          Three sentences with the numbers written into them, in the order they
+          get thought about: how long, how many, and then the changeover — the
+          only one that is really housekeeping. */}
+      <section
+        aria-labelledby={rulesGroupId}
+        className="flex scroll-mt-20 flex-col gap-5"
+      >
         <div className="flex flex-col gap-1">
           <h2 id={rulesGroupId} className="text-lg">
             What you&rsquo;ll say yes to
@@ -468,53 +551,66 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
           </p>
         </div>
 
-        <CountField
-          id={idFor("minNights")}
-          name="minNights"
-          label="Shortest stay"
-          unit="nights"
-          value={values.minNights}
-          error={errorFor("minNights")}
-          disabled={pending}
-          onChange={(next) => set("minNights", next)}
-        />
+        <div className="flex flex-col gap-3">
+          <Rule note={<Note id={lengthNoteId} error={lengthError} />}>
+            Stays here are between{" "}
+            <Blank
+              id={idFor("minNights")}
+              name="minNights"
+              label="Shortest stay, in nights"
+              value={values.minNights}
+              invalid={errorFor("minNights") !== null}
+              describedBy={lengthError ? lengthNoteId : undefined}
+              disabled={pending}
+              onChange={(next) => set("minNights", next)}
+            />{" "}
+            and{" "}
+            <Blank
+              id={idFor("maxNights")}
+              name="maxNights"
+              label="Longest stay, in nights"
+              value={values.maxNights}
+              invalid={errorFor("maxNights") !== null}
+              describedBy={lengthError ? lengthNoteId : undefined}
+              disabled={pending}
+              onChange={(next) => set("maxNights", next)}
+            />{" "}
+            nights.
+          </Rule>
 
-        <CountField
-          id={idFor("maxNights")}
-          name="maxNights"
-          label="Longest stay"
-          unit="nights"
-          value={values.maxNights}
-          error={errorFor("maxNights")}
-          disabled={pending}
-          onChange={(next) => set("maxNights", next)}
-        />
+          <Rule note={<Note id={roomNoteId} error={roomError} />}>
+            There is room for{" "}
+            <Blank
+              id={idFor("maxGuests")}
+              name="maxGuests"
+              label="Room for, in people"
+              value={values.maxGuests}
+              invalid={roomError !== null}
+              describedBy={roomError ? roomNoteId : undefined}
+              disabled={pending}
+              onChange={(next) => set("maxGuests", next)}
+            />{" "}
+            people.
+          </Rule>
 
-        <CountField
-          id={idFor("gapDays")}
-          name="gapDays"
-          label="Gap between stays"
-          unit="days"
-          // Every other row means what it says. Zero does not — it looks like
-          // "no rule" and is in fact a decision about the changeover day — so
-          // this is the one line that stays, and only while it is zero.
-          hint={gapHint}
-          value={values.gapDays}
-          error={errorFor("gapDays")}
-          disabled={pending}
-          onChange={(next) => set("gapDays", next)}
-        />
-
-        <CountField
-          id={idFor("maxGuests")}
-          name="maxGuests"
-          label="Room for"
-          unit="people"
-          value={values.maxGuests}
-          error={errorFor("maxGuests")}
-          disabled={pending}
-          onChange={(next) => set("maxGuests", next)}
-        />
+          {/* Every other sentence means what it says. Zero does not — it looks
+              like "no rule" and is in fact a decision about the changeover day
+              — so this is the one line that stays, and only while it is zero. */}
+          <Rule note={<Note id={gapNoteId} error={gapError} hint={gapHint} />}>
+            Leave{" "}
+            <Blank
+              id={idFor("gapDays")}
+              name="gapDays"
+              label="Days between stays"
+              value={values.gapDays}
+              invalid={gapError !== null}
+              describedBy={gapError || gapHint ? gapNoteId : undefined}
+              disabled={pending}
+              onChange={(next) => set("gapDays", next)}
+            />{" "}
+            days between one stay and the next.
+          </Rule>
+        </div>
 
         <div className="flex flex-col gap-2">
           <div className="flex flex-col gap-1">
@@ -574,7 +670,10 @@ export function SettingsForm({ house }: { house: HouseSettings }) {
       </section>
 
       {/* Privacy ------------------------------------------------------------ */}
-      <section aria-labelledby={privacyGroupId} className="flex flex-col gap-4">
+      <section
+        aria-labelledby={privacyGroupId}
+        className="flex scroll-mt-20 flex-col gap-4"
+      >
         <h2 id={privacyGroupId} className="text-lg">
           Privacy
         </h2>
