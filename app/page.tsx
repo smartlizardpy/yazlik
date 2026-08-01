@@ -61,6 +61,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
+import { LegalFooter } from "@/components/legal-footer";
 import { db } from "@/db";
 import { houses, images } from "@/db/schema";
 import { getSession } from "@/lib/session";
@@ -376,6 +377,8 @@ export default async function Home() {
           side is for whoever owns it.
         </p>
       </div>
+
+      <LegalFooter />
     </section>
   );
 }
