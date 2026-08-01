@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 
 /**
  * One narrow column with the same silhouette as `/`: the name and the words at
@@ -25,6 +26,22 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
     <div className="flex flex-1 flex-col pt-8 pb-8 sm:pt-16 sm:pb-16">
       <div className="mx-auto flex w-full max-w-sm flex-1 flex-col sm:flex-none sm:rounded-lg sm:border sm:border-border sm:p-6">
         {children}
+
+        {/* Signing in is the only moment an owner agrees to anything, so it is
+            the only honest place to say what they are agreeing to. Below the
+            form and quiet — a consent checkbox nobody reads would be worse
+            than a sentence they can. */}
+        <p className="mt-8 text-xs text-muted-foreground">
+          Signing in means you accept the{" "}
+          <Link href="/legal/terms" className="underline underline-offset-4">
+            terms
+          </Link>{" "}
+          and the{" "}
+          <Link href="/legal/privacy" className="underline underline-offset-4">
+            privacy page
+          </Link>
+          .
+        </p>
       </div>
     </div>
   );
