@@ -62,3 +62,18 @@ pnpm build        # production build
 
 - `HANDOFF.md` — current status, what's blocked on you, what to run to check the work.
 - `DECISIONS.md` — calls made without you, and how to reverse each one.
+
+## Legal pages
+
+`/legal/privacy`, `/legal/terms` and `/legal/contact`. They are short on
+purpose, and the privacy page is written from what the code actually does
+rather than from a template — every claim in it is checkable against a file.
+
+`app/legal/legal.test.ts` asserts the claims still hold. The page says there is
+no analytics and no tracking, which is true only while no package does it, so
+the test runs against the dependency list: adding `@vercel/analytics`, PostHog
+or Stripe fails the suite. That is the moment to change the page, rather than
+six months later.
+
+They are the only guest-facing routes that are **indexable**. A house link is
+noindex because it is private; these exist to be found and name nobody.
