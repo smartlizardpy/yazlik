@@ -78,6 +78,7 @@ import { ArrowRightIcon } from "lucide-react";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { Button } from "@/components/ui/button";
+import { LegalFooter } from "@/components/legal-footer";
 import { db } from "@/db";
 import { user } from "@/db/auth-schema";
 import { images, type BookingStatus } from "@/db/schema";
@@ -636,6 +637,7 @@ export default async function BookingPage(props: PageProps<"/b/[token]">) {
           />
         </div>
       ) : null}
+      <LegalFooter language={lang} />
     </article>
   );
 }
