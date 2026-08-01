@@ -37,6 +37,7 @@ import { notFound } from "next/navigation";
 import { ArrowUpRightIcon } from "lucide-react";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
+import { LegalFooter } from "@/components/legal-footer";
 import { PhotoStrip } from "@/components/photo-strip";
 import { db } from "@/db";
 import {
@@ -752,6 +753,7 @@ export default async function HousePage(props: PageProps<"/h/[slug]">) {
       {guide.places.length > 0 ? (
         <Places places={guide.places} lang={lang} />
       ) : null}
+      <LegalFooter language={lang} />
     </article>
   );
 }
