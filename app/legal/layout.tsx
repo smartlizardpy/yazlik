@@ -1,5 +1,18 @@
 import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
+
+/**
+ * Indexable, unlike everything else in this product.
+ *
+ * A house link is noindex because it is private and turning up in a search
+ * result would be a leak. These pages are the opposite: they exist to be found,
+ * including by somebody who has not been sent anything, and there is nothing in
+ * them about any particular house or guest.
+ */
+export const metadata: Metadata = {
+  robots: { index: true, follow: true },
+};
 
 /**
  * The shell the legal pages share.
