@@ -341,6 +341,53 @@
   min-width: 44px;
 }
 
+/* Prose, for the legal pages and nothing else.
+
+   Everywhere else in this product text is a label, a name or a sentence with a
+   control next to it, so headings and paragraphs are spaced by the component
+   that holds them. These pages are the one place with actual running text, and
+   giving them their own block is cheaper than hanging utilities off forty
+   elements. Deliberately not a plugin: it is six rules. */
+@utility prose-legal {
+  & h1 {
+    font-family: var(--font-heading);
+    font-size: var(--text-2xl);
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+  & h2 {
+    font-family: var(--font-heading);
+    font-size: var(--text-lg);
+    margin-top: 2.5rem;
+    margin-bottom: 0.5rem;
+  }
+  & p,
+  & li {
+    color: var(--muted-foreground);
+    line-height: 1.65;
+  }
+  & p + p,
+  & ul {
+    margin-top: 0.85rem;
+  }
+  & ul {
+    list-style: disc;
+    padding-left: 1.25rem;
+  }
+  & li + li {
+    margin-top: 0.35rem;
+  }
+  & a {
+    color: var(--foreground);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  & strong {
+    color: var(--foreground);
+    font-weight: 500;
+  }
+}
+
 /* Motion is decoration unless the user asked for it. */
 @media (prefers-reduced-motion: reduce) {
   *,
