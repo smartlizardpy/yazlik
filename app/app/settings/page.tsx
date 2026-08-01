@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
 
 import { ownerGuide } from "@/lib/guide";
+import { LegalFooter } from "@/components/legal-footer";
 import { requireHouse } from "@/lib/session";
 import { SettingsForm } from "./settings-form";
 import { SignOut } from "./sign-out";
@@ -141,6 +142,8 @@ export default async function SettingsPage() {
       {/* The last thing on the last screen, ruled off from the house so it
           cannot be mistaken for one more thing about the house. */}
       <SignOut />
+
+      <LegalFooter />
     </section>
   );
 }
